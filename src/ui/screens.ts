@@ -1,6 +1,6 @@
 import { sfx } from '../audio/sfx';
 import type { Report } from '../analysis/coach';
-import type { Correction, SavedSession } from '../analysis/progress';
+import type { Correction, DrillSuggestion, ProgressSummary, SavedSession } from '../analysis/progress';
 import type { ControlMode, Difficulty, DrillType } from '../types';
 
 export interface MenuSettings {
@@ -28,6 +28,8 @@ class UI {
   onCalibCancel: (() => void) | null = null;
   onShowProgress: (() => void) | null = null;
   onClearProgress: (() => void) | null = null;
+  onCoachTrain: (() => void) | null = null;
+  onMenuShown: (() => void) | null = null;
 
   private toastTimer: number | null = null;
 
@@ -47,6 +49,7 @@ class UI {
     $('#btnReportProgress').addEventListener('click', () => this.onShowProgress?.());
     $('#btnProgressBack').addEventListener('click', () => this.show('menu'));
     $('#btnProgressClear').addEventListener('click', () => this.onClearProgress?.());
+    $('#btnCoachTrain').addEventListener('click', () => this.onCoachTrain?.());
 
     // Sonido: desbloquear el AudioContext con el primer gesto y clicks de UI
     const btnSound = $('#btnSound') as HTMLButtonElement;
@@ -87,6 +90,40 @@ class UI {
   show(id: ScreenId): void {
     document.querySelectorAll('.screen').forEach((s) => s.classList.remove('active'));
     if (id !== 'none') $(`#${id}`).classList.add('active');
+    if (id === 'menu') this.onMenuShown?.();
+  }
+
+  /** Selecciona un drill en el menú (igual que si el usuario pulsara el botón). */
+  selectDrill(drill: DrillType): void {
+    this.settings.drill = drill;
+    $('#drillRow')
+      .querySelectorAll<HTMLButtonElement>('.opt')
+      .forEach((b) => b.classList.toggle('selected', b.dataset.drill === drill));
+  }
+
+  /** Tarjeta "entrenamiento del día" del menú: racha + drill sugerido. */
+  setCoach(summary: ProgressSummary, suggestion: DrillSuggestion | null): void {
+    const card = $('#coachCard');
+    if (summary.totalSessions === 0) {
+      card.hidden = true;
+      return;
+    }
+    card.hidden = false;
+    const fire = summary.streakDays >= 3 ? '🔥🔥' : '🔥';
+    $('#coachStreak').textContent =
+      summary.streakDays > 0
+        ? `${fire} Racha: ${summary.streakDays} ${summary.streakDays === 1 ? 'día' : 'días'} entrenando` +
+          (summary.trainedToday ? ' · ¡hoy ya cuenta!' : ' · entrena hoy para no perderla')
+        : `${summary.totalSessions} sesiones guardadas · entrena hoy para empezar una racha`;
+    const tip = $('#coachTip');
+    const btn = $('#btnCoachTrain') as HTMLButtonElement;
+    if (suggestion) {
+      tip.textContent = `🧑‍🏫 ${suggestion.reason}`;
+      btn.hidden = false;
+    } else {
+      tip.textContent = '🧑‍🏫 Sin correcciones pendientes: ¡a por un partido!';
+      btn.hidden = true;
+    }
   }
 
   setHudVisible(v: boolean): void {

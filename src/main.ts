@@ -4,7 +4,14 @@ import { PracticeMode } from './modes/practice';
 import { Ball } from './game/ball';
 import { PlayerEntity } from './game/player';
 import { analyzeMatch } from './analysis/coach';
-import { clearSessions, loadSessions, pendingCorrections, saveSession } from './analysis/progress';
+import {
+  clearSessions,
+  loadSessions,
+  pendingCorrections,
+  saveSession,
+  suggestDrill,
+  summarize,
+} from './analysis/progress';
 import { SHOT_NAMES } from './types';
 import { PoseTracker } from './camera/pose';
 import { CameraControl } from './camera/gestures';
@@ -161,6 +168,13 @@ function showProgress(): void {
   ui.showProgress(sessions, pendingCorrections(sessions));
 }
 
+let lastSuggestion: ReturnType<typeof suggestDrill> = null;
+function refreshCoachCard(): void {
+  const sessions = loadSessions();
+  lastSuggestion = suggestDrill(pendingCorrections(sessions));
+  ui.setCoach(summarize(sessions), lastSuggestion);
+}
+
 ui.onStartMatch = () => void startMatch();
 ui.onStartPractice = () => void startPractice();
 ui.onQuit = backToMenu;
@@ -171,6 +185,13 @@ ui.onClearProgress = () => {
     showProgress();
   }
 };
+ui.onMenuShown = refreshCoachCard;
+ui.onCoachTrain = () => {
+  if (!lastSuggestion) return;
+  ui.selectDrill(lastSuggestion.drill);
+  void startPractice();
+};
+refreshCoachCard();
 ui.onAgain = () => {
   ui.show('none');
   if (lastModeWasMatch) void startMatch();

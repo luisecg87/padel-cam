@@ -1,3 +1,5 @@
+import { SHOT_NAMES } from '../types';
+import type { DrillType, ShotType } from '../types';
 import type { Report, Tip } from './coach';
 
 // Historial de sesiones e informes del entrenador, guardado en localStorage
@@ -82,4 +84,68 @@ export function pendingCorrections(sessions: SavedSession[]): Correction[] {
   return [...map.values()].sort(
     (a, b) => Number(b.active) - Number(a.active) || b.count - a.count || b.lastDate - a.lastDate,
   );
+}
+
+// ---------- Racha y plan del día (bucle de retención) ----------
+
+export interface ProgressSummary {
+  totalSessions: number;
+  streakDays: number; // días consecutivos entrenados (sigue viva si entrenaste ayer)
+  trainedToday: boolean;
+}
+
+export function summarize(sessions: SavedSession[]): ProgressSummary {
+  const days = new Set(sessions.map((s) => new Date(s.date).toDateString()));
+  const d = new Date();
+  const trainedToday = days.has(d.toDateString());
+  if (!trainedToday) d.setDate(d.getDate() - 1);
+  let streakDays = 0;
+  while (days.has(d.toDateString())) {
+    streakDays++;
+    d.setDate(d.getDate() - 1);
+  }
+  return { totalSessions: sessions.length, streakDays, trainedToday };
+}
+
+export interface DrillSuggestion {
+  drill: DrillType;
+  reason: string;
+}
+
+const SHOT_DRILL: Partial<Record<ShotType, DrillType>> = {
+  forehand: 'forehand',
+  backhand: 'backhand',
+  volleyFh: 'volley',
+  volleyBh: 'volley',
+  bandeja: 'bandeja',
+  vibora: 'vibora',
+  smash: 'smash',
+};
+
+const KEY_DRILL: Record<string, DrillSuggestion> = {
+  'timing-tarde': { drill: 'mixto', reason: 'Llegas tarde a la bola: afina el timing con golpes variados.' },
+  'timing-pronto': { drill: 'mixto', reason: 'Golpeas antes de tiempo: afina el timing con golpes variados.' },
+  'llegar-bola': { drill: 'mixto', reason: 'Se te escapan bolas: trabaja el desplazamiento con golpes variados.' },
+  'golpes-al-aire': { drill: 'mixto', reason: 'Demasiados golpes al aire: entrena la lectura de bola.' },
+  'eleccion-golpe': { drill: 'mixto', reason: 'Confundes qué golpe toca: el drill mixto te obliga a leer cada bola.' },
+  'subir-red': { drill: 'volley', reason: 'Juegas demasiado atrás: domina la volea para atreverte a subir.' },
+  'juego-pared': { drill: 'mixto', reason: 'La pared te está costando puntos: entrena la lectura del rebote.' },
+};
+
+/** Elige el drill del día a partir de la corrección pendiente más repetida. */
+export function suggestDrill(corrections: Correction[]): DrillSuggestion | null {
+  for (const c of corrections) {
+    if (!c.active) continue;
+    if (c.key.startsWith('golpe-debil-')) {
+      const shot = c.key.slice('golpe-debil-'.length) as ShotType;
+      const drill = SHOT_DRILL[shot];
+      if (drill) {
+        return { drill, reason: `Tu ${SHOT_NAMES[shot]} falló mucho la última sesión: dale un drill.` };
+      }
+      continue;
+    }
+    const s = KEY_DRILL[c.key];
+    if (s) return s;
+  }
+  return null;
 }

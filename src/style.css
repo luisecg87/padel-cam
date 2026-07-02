@@ -53,6 +53,18 @@ h2 { font-size: clamp(1.4rem, 4.5vw, 2.2rem); }
 h3 { margin-top: 10px; }
 .tagline { opacity: .8; margin-bottom: 10px; }
 
+.coach-card {
+  background: rgba(255, 209, 102, .1);
+  border: 1px solid rgba(255, 209, 102, .35);
+  border-radius: 14px;
+  padding: 12px 18px;
+  width: min(560px, 92vw);
+  display: flex; flex-direction: column; gap: 8px; align-items: center;
+}
+.coach-streak { font-weight: 700; color: #ffd166; font-size: .95rem; }
+.coach-tip { font-size: .92rem; opacity: .9; }
+.coach-card[hidden] { display: none; }
+
 .menu-group { display: flex; flex-direction: column; gap: 6px; align-items: center; }
 .menu-group > label { font-size: .8rem; text-transform: uppercase; letter-spacing: 2px; opacity: .65; }
 
