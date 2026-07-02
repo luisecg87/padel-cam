@@ -345,9 +345,7 @@ export class MatchMode {
     // Movimiento del jugador
     const move = this.opts.control.getMove();
     if (move.mode === 'velocity') {
-      this.player.x += move.x * this.player.speed * dt;
-      this.player.z += move.z * this.player.speed * dt;
-      this.player.clampToCourt();
+      this.player.applyMoveInput(move.x, move.z, dt);
     } else {
       // Cámara: x absoluta, z automática (el juego te coloca en profundidad)
       let targetZ = 17.5;

@@ -13,14 +13,37 @@ export class PlayerEntity {
   // Animación de golpe
   swingType: ShotType | null = null;
   swingT = 0; // 0..1
+  // Animación de carrera (derivada del movimiento real)
+  runPhase = 0;
+  moveAmount = 0; // 0..1, cuánto se está moviendo
+  lean = 0; // inclinación lateral al correr
+  private prevX: number;
+  private prevZ: number;
 
   constructor(side: Side) {
     this.side = side;
     this.z = side === 'player' ? 17.5 : 2.5;
+    this.prevX = this.x;
+    this.prevZ = this.z;
   }
 
   get baseZ(): number {
     return this.side === 'player' ? 17.5 : 2.5;
+  }
+
+  private velX = 0;
+  private velZ = 0;
+
+  /** Movimiento por teclado/táctil con aceleración suave (más precisión que el paso directo). */
+  applyMoveInput(mx: number, mz: number, dt: number): void {
+    const accel = 32; // m/s²
+    const tvx = mx * this.speed;
+    const tvz = mz * this.speed;
+    this.velX += clamp(tvx - this.velX, -accel * dt, accel * dt);
+    this.velZ += clamp(tvz - this.velZ, -accel * dt, accel * dt);
+    this.x += this.velX * dt;
+    this.z += this.velZ * dt;
+    this.clampToCourt();
   }
 
   moveToward(targetX: number, targetZ: number, dt: number): void {
@@ -57,5 +80,19 @@ export class PlayerEntity {
         this.swingT = 0;
       }
     }
+
+    // Animación de carrera según el desplazamiento real de este frame
+    if (dt > 0) {
+      const dx = this.x - this.prevX;
+      const dist = Math.hypot(dx, this.z - this.prevZ);
+      const speed = dist / dt;
+      const target = clamp(speed / 5, 0, 1);
+      this.moveAmount += (target - this.moveAmount) * 0.18;
+      if (this.moveAmount > 0.04) this.runPhase += dt * (5 + 11 * this.moveAmount);
+      const leanTarget = clamp((dx / dt) * 0.06, -0.25, 0.25);
+      this.lean += (leanTarget - this.lean) * 0.15;
+    }
+    this.prevX = this.x;
+    this.prevZ = this.z;
   }
 }

@@ -389,9 +389,7 @@ export class PracticeMode {
 
     const move = this.opts.control.getMove();
     if (move.mode === 'velocity') {
-      this.player.x += move.x * this.player.speed * dt;
-      this.player.z += move.z * this.player.speed * dt;
-      this.player.clampToCourt();
+      this.player.applyMoveInput(move.x, move.z, dt);
     } else {
       // En volea el juego te adelanta a la red; en el resto, según la bola
       let targetZ = this.expected === 'volley' && this.phase === 'ball' ? 12.6 : 16.5;

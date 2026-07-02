@@ -15,18 +15,21 @@ export class Ball {
   pos: Vec3 = { x: 0, y: 1, z: 15 };
   vel: Vec3 = { x: 0, y: 0, z: 0 };
   active = false; // si la física está corriendo (false = bola en mano / punto terminado)
+  trail: Vec3[] = []; // últimas posiciones, para la estela
   callbacks: BallCallbacks = {};
 
   reset(pos: Vec3): void {
     this.pos = { ...pos };
     this.vel = { x: 0, y: 0, z: 0 };
     this.active = false;
+    this.trail.length = 0;
   }
 
   launch(pos: Vec3, vel: Vec3): void {
     this.pos = { ...pos };
     this.vel = { ...vel };
     this.active = true;
+    this.trail.length = 0;
   }
 
   /** Predice el punto de aterrizaje (ignora paredes). */
@@ -40,6 +43,8 @@ export class Ball {
 
   update(dt: number): void {
     if (!this.active) return;
+    this.trail.push({ ...this.pos });
+    if (this.trail.length > 9) this.trail.shift();
     const prev = { ...this.pos };
 
     this.vel.y -= GRAVITY * dt;

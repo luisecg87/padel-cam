@@ -7,6 +7,30 @@ import type { Vec3 } from '../types';
 const CAM_Z = 26;
 const CAM_H = 4.8;
 
+interface Palette {
+  shirt: string;
+  shirtDark: string;
+  shorts: string;
+  skin: string;
+  hair: string;
+}
+
+const PLAYER_PALETTE: Palette = {
+  shirt: '#22c4ae',
+  shirtDark: '#128a79',
+  shorts: '#0d3b55',
+  skin: '#e9b98d',
+  hair: '#3a2a1c',
+};
+
+const CPU_PALETTE: Palette = {
+  shirt: '#f0764f',
+  shirtDark: '#bd4a2c',
+  shorts: '#3a2734',
+  skin: '#f0c9a0',
+  hair: '#20242c',
+};
+
 export class Renderer {
   canvas: HTMLCanvasElement;
   ctx: CanvasRenderingContext2D;
@@ -45,14 +69,13 @@ export class Renderer {
   }
 
   draw(ball: Ball, player: PlayerEntity, cpu: PlayerEntity, showBall: boolean): void {
-    const ctx = this.ctx;
     this.drawBackground();
     this.drawCourt();
-    this.drawAvatar(cpu, '#e76f51', '#ffd7c2', true);
-    if (showBall && ball.pos.z <= COURT.netZ) this.drawBall(ball.pos);
+    this.drawAvatar(cpu, CPU_PALETTE, true);
+    if (showBall && ball.pos.z <= COURT.netZ) this.drawBall(ball);
     this.drawNet();
-    if (showBall && ball.pos.z > COURT.netZ) this.drawBall(ball.pos);
-    this.drawAvatar(player, '#2a9d8f', '#bfeee8', false);
+    if (showBall && ball.pos.z > COURT.netZ) this.drawBall(ball);
+    this.drawAvatar(player, PLAYER_PALETTE, false);
   }
 
   private drawBackground(): void {
@@ -195,8 +218,21 @@ export class Renderer {
     }
   }
 
-  private drawBall(pos: Vec3): void {
+  private drawBall(ball: Ball): void {
     const ctx = this.ctx;
+    const pos = ball.pos;
+
+    // Estela de movimiento
+    for (let i = 0; i < ball.trail.length; i++) {
+      const t = ball.trail[i];
+      const tp = this.project(t.x, t.y, t.z);
+      const tr = Math.max(BALL_RADIUS * tp.s * 1.6, 3) * (0.35 + (i / ball.trail.length) * 0.5);
+      ctx.fillStyle = `rgba(217, 224, 33, ${(0.04 + (i / ball.trail.length) * 0.16).toFixed(3)})`;
+      ctx.beginPath();
+      ctx.arc(tp.x, tp.y, tr, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
     // Sombra en el suelo (clave para leer la profundidad)
     const sh = this.project(pos.x, 0, pos.z);
     const shR = Math.max(BALL_RADIUS * sh.s, 2.5);
@@ -214,79 +250,207 @@ export class Renderer {
     ctx.beginPath();
     ctx.arc(p.x, p.y, r, 0, Math.PI * 2);
     ctx.fill();
+    // Costura de la pelota
+    ctx.strokeStyle = 'rgba(255,255,255,0.55)';
+    ctx.lineWidth = Math.max(r * 0.12, 0.7);
+    ctx.beginPath();
+    ctx.arc(p.x - r * 0.25, p.y, r * 0.82, -0.8, 0.8);
+    ctx.stroke();
   }
 
-  private drawAvatar(p: PlayerEntity, color: string, skin: string, facingCamera: boolean): void {
+  private drawAvatar(p: PlayerEntity, pal: Palette, facingCamera: boolean): void {
     const ctx = this.ctx;
     const base = this.project(p.x, 0, p.z);
     const s = base.s; // píxeles por metro
+    const cx = base.x;
 
     // Sombra
-    ctx.fillStyle = 'rgba(0,0,0,0.3)';
+    ctx.fillStyle = 'rgba(0,0,0,0.32)';
     ctx.beginPath();
-    ctx.ellipse(base.x, base.y, 0.45 * s, 0.14 * s, 0, 0, Math.PI * 2);
+    ctx.ellipse(cx, base.y, 0.42 * s, 0.13 * s, 0, 0, Math.PI * 2);
     ctx.fill();
 
-    const legH = 0.85 * s;
-    const bodyH = 0.65 * s;
-    const headR = 0.16 * s;
-    const hipY = base.y - legH;
-    const shoulderY = hipY - bodyH;
+    const legLen = 0.82 * s;
+    const bodyH = 0.62 * s;
+    const headR = 0.15 * s;
+    const hipY = base.y - legLen;
+    const shY = hipY - bodyH;
+    const lean = p.lean * (facingCamera ? -1 : 1);
 
-    // Piernas
-    ctx.strokeStyle = color;
-    ctx.lineWidth = Math.max(0.09 * s, 2);
+    // Zancada: las piernas se balancean con el movimiento real
+    const stride = Math.sin(p.runPhase) * 0.2 * s * p.moveAmount;
+    const kneeLift = Math.abs(Math.sin(p.runPhase)) * 0.08 * s * p.moveAmount;
+
     ctx.lineCap = 'round';
+
+    // ---- Piernas (piel) con zapatillas ----
+    const legW = Math.max(0.1 * s, 2.5);
+    const drawLeg = (side: -1 | 1, offset: number): void => {
+      const hx = cx + side * 0.1 * s;
+      const fx = cx + side * 0.15 * s + offset;
+      const fy = base.y - Math.abs(offset) * 0.25;
+      const kx = (hx + fx) / 2 + side * 0.02 * s;
+      const ky = (hipY + fy) / 2 + kneeLift;
+      ctx.strokeStyle = pal.skin;
+      ctx.lineWidth = legW;
+      ctx.beginPath();
+      ctx.moveTo(hx, hipY + 0.1 * s);
+      ctx.quadraticCurveTo(kx, ky, fx, fy - 0.04 * s);
+      ctx.stroke();
+      // Zapatilla
+      ctx.fillStyle = '#f2f5f7';
+      ctx.beginPath();
+      ctx.ellipse(fx, fy - 0.02 * s, 0.11 * s, 0.055 * s, 0, 0, Math.PI * 2);
+      ctx.fill();
+    };
+    drawLeg(-1, stride);
+    drawLeg(1, -stride);
+
+    // ---- Pantalón corto ----
+    ctx.fillStyle = pal.shorts;
+    this.roundRect(cx - 0.17 * s, hipY - 0.08 * s, 0.34 * s, 0.26 * s, 0.07 * s);
+
+    // ---- Torso con sombreado ----
+    const g = ctx.createLinearGradient(cx - 0.2 * s, 0, cx + 0.2 * s, 0);
+    if (facingCamera) {
+      g.addColorStop(0, pal.shirtDark);
+      g.addColorStop(0.45, pal.shirt);
+      g.addColorStop(1, pal.shirt);
+    } else {
+      g.addColorStop(0, pal.shirt);
+      g.addColorStop(0.55, pal.shirt);
+      g.addColorStop(1, pal.shirtDark);
+    }
+    ctx.save();
+    ctx.translate(cx, hipY);
+    ctx.rotate(lean);
+    ctx.fillStyle = g;
+    this.roundRect(-0.19 * s, -bodyH, 0.38 * s, bodyH + 0.02 * s, 0.12 * s);
+
+    // ---- Brazo libre (se balancea al correr, al contrario que las piernas) ----
+    const offSide = facingCamera ? 1 : -1;
+    const armSway = -stride * 0.6;
+    ctx.strokeStyle = pal.skin;
+    ctx.lineWidth = Math.max(0.075 * s, 2);
     ctx.beginPath();
-    ctx.moveTo(base.x - 0.14 * s, base.y);
-    ctx.lineTo(base.x - 0.06 * s, hipY);
-    ctx.moveTo(base.x + 0.14 * s, base.y);
-    ctx.lineTo(base.x + 0.06 * s, hipY);
+    ctx.moveTo(offSide * 0.17 * s, -bodyH + 0.08 * s);
+    ctx.quadraticCurveTo(
+      offSide * 0.26 * s,
+      -bodyH * 0.5,
+      offSide * 0.22 * s + armSway,
+      -0.12 * s,
+    );
     ctx.stroke();
 
-    // Torso
-    ctx.lineWidth = Math.max(0.3 * s, 4);
+    // ---- Cabeza ----
+    const headY = -bodyH - headR * 1.15;
+    ctx.fillStyle = pal.skin;
     ctx.beginPath();
-    ctx.moveTo(base.x, hipY);
-    ctx.lineTo(base.x, shoulderY + 0.05 * s);
-    ctx.stroke();
-
-    // Cabeza
-    ctx.fillStyle = skin;
-    ctx.beginPath();
-    ctx.arc(base.x, shoulderY - headR * 1.2, headR, 0, Math.PI * 2);
+    ctx.arc(0, headY, headR, 0, Math.PI * 2);
     ctx.fill();
+    // Pelo: de frente se ve el flequillo, de espaldas cubre casi toda la cabeza
+    ctx.fillStyle = pal.hair;
+    ctx.beginPath();
+    if (facingCamera) {
+      ctx.arc(0, headY, headR * 1.02, Math.PI * 1.05, Math.PI * 1.95);
+      ctx.closePath();
+    } else {
+      ctx.arc(0, headY - headR * 0.05, headR * 1.02, Math.PI * 0.9, Math.PI * 2.1);
+      ctx.closePath();
+    }
+    ctx.fill();
+    // Cinta deportiva
+    ctx.strokeStyle = facingCamera ? '#f4f7fb' : '#ffd166';
+    ctx.lineWidth = Math.max(headR * 0.22, 1.2);
+    ctx.beginPath();
+    ctx.arc(0, headY, headR * 0.98, Math.PI * 1.15, Math.PI * 1.85);
+    ctx.stroke();
+    // Ojos si está de frente y lo bastante cerca
+    if (facingCamera && s > 26) {
+      ctx.fillStyle = '#1c222b';
+      ctx.beginPath();
+      ctx.arc(-headR * 0.32, headY + headR * 0.1, headR * 0.09, 0, Math.PI * 2);
+      ctx.arc(headR * 0.32, headY + headR * 0.1, headR * 0.09, 0, Math.PI * 2);
+      ctx.fill();
+    }
 
-    // Brazo con pala (animado durante el swing)
+    // ---- Brazo de la pala, articulado (hombro → codo → mano) ----
     const swinging = p.swingType !== null;
     let armAngle: number;
     if (swinging) {
-      // Barrido de -140° a 40° (o remate de arriba abajo)
       const t = p.swingT;
       if (p.swingType === 'smash') {
-        armAngle = -Math.PI / 2 + t * Math.PI * 0.9;
+        armAngle = -Math.PI * 0.75 + t * Math.PI * 1.1;
       } else {
         const dir = p.swingType === 'backhand' ? -1 : 1;
-        armAngle = dir * (-2.2 + t * 3.2);
+        armAngle = dir * (-2.1 + t * 3.1);
       }
     } else {
-      armAngle = 0.9; // pala preparada abajo
+      armAngle = 1.0 + armSway / Math.max(s, 1); // pala abajo, con leve balanceo
     }
-    const armLen = 0.55 * s;
-    const ax = base.x + Math.sin(armAngle) * armLen * (facingCamera ? -1 : 1);
-    const ay = shoulderY + Math.cos(armAngle) * armLen * 0.6 + 0.1 * s;
-
-    ctx.strokeStyle = skin;
+    const armSide = facingCamera ? -1 : 1;
+    const shoulder = { x: armSide * 0.17 * s, y: -bodyH + 0.08 * s };
+    const armLen = 0.52 * s;
+    const hand = {
+      x: shoulder.x + Math.sin(armAngle) * armLen * armSide,
+      y: shoulder.y + Math.cos(armAngle) * armLen * 0.75 + 0.06 * s,
+    };
+    // Codo desplazado perpendicularmente para que el brazo se doble natural
+    const mid = { x: (shoulder.x + hand.x) / 2, y: (shoulder.y + hand.y) / 2 };
+    const elbow = {
+      x: mid.x + Math.cos(armAngle) * 0.09 * s * armSide,
+      y: mid.y + Math.sin(armAngle) * 0.06 * s,
+    };
+    ctx.strokeStyle = pal.skin;
     ctx.lineWidth = Math.max(0.08 * s, 2);
     ctx.beginPath();
-    ctx.moveTo(base.x + (facingCamera ? -0.12 : 0.12) * s, shoulderY + 0.08 * s);
-    ctx.lineTo(ax, ay);
+    ctx.moveTo(shoulder.x, shoulder.y);
+    ctx.quadraticCurveTo(elbow.x, elbow.y, hand.x, hand.y);
     ctx.stroke();
 
-    // Pala
+    // ---- Pala de pádel ----
+    const rackAngle = armAngle * armSide;
+    const rackLen = 0.16 * s;
+    const rackCx = hand.x + Math.sin(rackAngle) * rackLen;
+    const rackCy = hand.y + Math.cos(rackAngle) * rackLen * 0.8;
+    // Mango
+    ctx.strokeStyle = '#2b2f38';
+    ctx.lineWidth = Math.max(0.045 * s, 1.5);
+    ctx.beginPath();
+    ctx.moveTo(hand.x, hand.y);
+    ctx.lineTo(rackCx, rackCy);
+    ctx.stroke();
+    // Marco y cara
     ctx.fillStyle = swinging ? '#ffd166' : '#c8551b';
     ctx.beginPath();
-    ctx.ellipse(ax, ay, 0.13 * s, 0.17 * s, armAngle, 0, Math.PI * 2);
+    ctx.ellipse(rackCx, rackCy, 0.13 * s, 0.16 * s, rackAngle, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = swinging ? '#ffe3a1' : '#e07a3f';
+    ctx.beginPath();
+    ctx.ellipse(rackCx, rackCy, 0.095 * s, 0.125 * s, rackAngle, 0, Math.PI * 2);
+    ctx.fill();
+    // Agujeros de la pala
+    if (s > 30) {
+      ctx.fillStyle = 'rgba(0,0,0,0.25)';
+      for (const [ox, oy] of [[0, 0], [-0.04, -0.05], [0.04, -0.05], [-0.04, 0.05], [0.04, 0.05]]) {
+        ctx.beginPath();
+        ctx.arc(rackCx + ox * s, rackCy + oy * s, 0.012 * s, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
+
+    ctx.restore();
+  }
+
+  private roundRect(x: number, y: number, w: number, h: number, r: number): void {
+    const ctx = this.ctx;
+    ctx.beginPath();
+    ctx.moveTo(x + r, y);
+    ctx.arcTo(x + w, y, x + w, y + h, r);
+    ctx.arcTo(x + w, y + h, x, y + h, r);
+    ctx.arcTo(x, y + h, x, y, r);
+    ctx.arcTo(x, y, x + w, y, r);
+    ctx.closePath();
     ctx.fill();
   }
 }
