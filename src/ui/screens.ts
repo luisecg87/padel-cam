@@ -1,4 +1,6 @@
+import { sfx } from '../audio/sfx';
 import type { Report } from '../analysis/coach';
+import type { Correction, SavedSession } from '../analysis/progress';
 import type { ControlMode, Difficulty, DrillType } from '../types';
 
 export interface MenuSettings {
@@ -7,7 +9,7 @@ export interface MenuSettings {
   drill: DrillType;
 }
 
-type ScreenId = 'menu' | 'calib' | 'report' | 'none';
+type ScreenId = 'menu' | 'calib' | 'report' | 'progress' | 'none';
 
 const $ = <T extends HTMLElement = HTMLElement>(sel: string): T => {
   const el = document.querySelector<T>(sel);
@@ -24,6 +26,8 @@ class UI {
   onAgain: (() => void) | null = null;
   onCalibReady: (() => void) | null = null;
   onCalibCancel: (() => void) | null = null;
+  onShowProgress: (() => void) | null = null;
+  onClearProgress: (() => void) | null = null;
 
   private toastTimer: number | null = null;
 
@@ -39,11 +43,33 @@ class UI {
     $('#btnReportMenu').addEventListener('click', () => this.show('menu'));
     $('#btnCalibReady').addEventListener('click', () => this.onCalibReady?.());
     $('#btnCalibCancel').addEventListener('click', () => this.onCalibCancel?.());
+    $('#btnProgress').addEventListener('click', () => this.onShowProgress?.());
+    $('#btnReportProgress').addEventListener('click', () => this.onShowProgress?.());
+    $('#btnProgressBack').addEventListener('click', () => this.show('menu'));
+    $('#btnProgressClear').addEventListener('click', () => this.onClearProgress?.());
+
+    // Sonido: desbloquear el AudioContext con el primer gesto y clicks de UI
+    const btnSound = $('#btnSound') as HTMLButtonElement;
+    const syncSound = () => {
+      btnSound.textContent = sfx.muted ? '🔇' : '🔊';
+      btnSound.title = sfx.muted ? 'Activar sonido' : 'Silenciar';
+    };
+    btnSound.addEventListener('click', () => {
+      sfx.unlock();
+      sfx.setMuted(!sfx.muted);
+      syncSound();
+    });
+    syncSound();
+    window.addEventListener('pointerdown', () => sfx.unlock(), { once: true });
+    window.addEventListener('keydown', () => sfx.unlock(), { once: true });
+    $('#ui').addEventListener('click', (e) => {
+      if ((e.target as HTMLElement).closest('button')) sfx.click();
+    });
 
     const isTouch = 'ontouchstart' in window;
     $('#menuHint').textContent = isTouch
-      ? 'Teclado/Táctil: lado izquierdo para moverte, toca el lado derecho para golpear.'
-      : 'Teclado: flechas o WASD para moverte · ESPACIO para golpear (mantén ← o → para dirigir el golpe).';
+      ? 'Táctil: lado izquierdo para moverte, toca el lado derecho para golpear (zona alta de la pantalla = remate).'
+      : 'Teclado: flechas o WASD para moverte · ESPACIO golpea (←/→ dirigen). Con globo: ESPACIO = bandeja · ↑+ESPACIO = remate · ←/→+ESPACIO = víbora.';
   }
 
   private wireOptionRow(rowSel: string, dataKey: string, settingKey: keyof MenuSettings): void {
@@ -106,7 +132,7 @@ class UI {
     ($('#btnCalibReady') as HTMLButtonElement).disabled = state !== 'ok';
   }
 
-  showReport(title: string, report: Report): void {
+  showReport(title: string, report: Report, saved = false): void {
     $('#reportTitle').textContent = title;
     $('#reportStats').innerHTML = report.stats
       .map(
@@ -116,7 +142,56 @@ class UI {
     $('#reportTips').innerHTML = report.tips
       .map((t) => `<div class="tip${t.warn ? ' warn' : ''}">${t.warn ? '⚠️' : '✅'} ${t.text}</div>`)
       .join('');
+    $('#reportSaved').textContent = saved
+      ? '💾 Informe guardado: revisa tus correcciones en «Mi progreso»'
+      : '';
     this.show('report');
+  }
+
+  showProgress(sessions: SavedSession[], corrections: Correction[]): void {
+    const cEl = $('#progressCorrections');
+    if (corrections.length === 0) {
+      cEl.innerHTML =
+        '<p class="hint">Aún no hay correcciones guardadas. Juega un partido o una práctica y tu entrenador anotará aquí lo que tienes que trabajar.</p>';
+    } else {
+      cEl.innerHTML = corrections
+        .slice(0, 6)
+        .map(
+          (c) =>
+            `<div class="tip${c.active ? ' warn' : ''}"><b>${
+              c.active ? '📌 Pendiente' : '✅ Sin repetir últimamente'
+            }</b> · vista en ${c.count} ${c.count === 1 ? 'sesión' : 'sesiones'}<br>${c.text}</div>`,
+        )
+        .join('');
+    }
+
+    const sEl = $('#progressSessions');
+    if (sessions.length === 0) {
+      sEl.innerHTML = '<p class="hint">Sin sesiones todavía.</p>';
+    } else {
+      const fmt = new Intl.DateTimeFormat('es', {
+        day: '2-digit',
+        month: 'short',
+        hour: '2-digit',
+        minute: '2-digit',
+      });
+      sEl.innerHTML = [...sessions]
+        .slice(-10)
+        .reverse()
+        .map((s) => {
+          const stats = s.stats
+            .slice(0, 3)
+            .map((st) => `${st.lbl}: <b>${st.val}</b>`)
+            .join(' · ');
+          return `<div class="session-card"><div class="session-head"><span>${
+            s.mode === 'match' ? '🏆' : '🎯'
+          } ${s.title}</span><span class="session-date">${fmt.format(
+            new Date(s.date),
+          )}</span></div><div class="session-stats">${stats}</div></div>`;
+        })
+        .join('');
+    }
+    this.show('progress');
   }
 }
 

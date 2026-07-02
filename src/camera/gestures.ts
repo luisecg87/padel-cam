@@ -100,11 +100,13 @@ export class CameraControl implements ControlAdapter {
       ) {
         this.lastSwingT = t;
         const shoulderY = (lm[LM.L_SHOULDER].y + lm[LM.R_SHOULDER].y) / 2;
-        // Remate: la muñeca estaba por encima de los hombros y baja con fuerza
+        // Golpe alto: la muñeca estaba por encima de los hombros y baja con fuerza
         const overhead = first.y < shoulderY && dy / dtw > 0.4;
         const vxBw = dx / dtw / bw;
         const dir: -1 | 0 | 1 = vxBw > 3 ? 1 : vxBw < -3 ? -1 : 0;
-        this.swings.push({ dir, overhead });
+        // Fuerza del gesto: brazo lento arriba = bandeja, latigazo = remate
+        const power = clamp((speedBw - SWING_SPEED_BW) / 9, 0, 1);
+        this.swings.push({ dir, overhead, power });
         this.history.L = [];
         this.history.R = [];
         break;

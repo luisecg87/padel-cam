@@ -4,8 +4,9 @@ import { PlayerEntity, REACH_X, REACH_Z } from './player';
 import { CpuAi } from './ai';
 import { Score } from './scoring';
 import { Renderer } from './render';
-import { computeShotVelocity } from './shots';
+import { classifySwing, computeShotVelocity, SHOT_PARAMS } from './shots';
 import { MatchLogger } from '../analysis/logger';
+import { sfx } from '../audio/sfx';
 import { ui } from '../ui/screens';
 import { clamp, opponent } from '../types';
 import type { ControlAdapter, SwingEvent } from '../ui/input';
@@ -62,9 +63,20 @@ export class MatchMode {
     if (opts.controlMode === 'camera') this.player.speed = 8;
 
     this.ball.callbacks = {
-      onGround: (pos) => this.onGround(pos.x, pos.z),
-      onWall: () => this.onWall(),
-      onNet: () => this.onNet(),
+      onGround: (pos) => {
+        sfx.bounce();
+        this.opts.renderer.burst(pos, '150, 200, 240', 5, 1.4);
+        this.onGround(pos.x, pos.z);
+      },
+      onWall: (pos) => {
+        sfx.wall();
+        this.opts.renderer.burst(pos, '210, 235, 255', 6, 1.8);
+        this.onWall();
+      },
+      onNet: () => {
+        sfx.net();
+        this.onNet();
+      },
       onOut: () => this.onOut(),
     };
   }
@@ -143,6 +155,7 @@ export class MatchMode {
 
     const entity = server === 'player' ? this.player : this.cpu;
     entity.startSwing('serve');
+    sfx.hit('serve');
     this.logger.logShot({
       by: server, type: 'serve', quality, timing: 0,
       x: entity.x, z: entity.z, afterWall: false,
@@ -159,6 +172,7 @@ export class MatchMode {
   private serveFault(): void {
     this.ball.active = false;
     this.logger.logServeFault();
+    sfx.fault();
     if (this.serveNumber === 1) {
       this.serveNumber = 2;
       ui.toast('¡Falta de saque!', 1100);
@@ -232,10 +246,16 @@ export class MatchMode {
       msg += '\n🎾 ¡Juego!';
       this.pointsInGame = 0;
       this.servingSide = opponent(this.servingSide);
+      if (winner === 'player') sfx.gameWin();
+      else sfx.pointLose();
     } else if (res === 'match') {
       msg = this.score.winner === 'player' ? '🏆 ¡PARTIDO GANADO!' : '🤖 La CPU gana el partido';
+      if (this.score.winner === 'player') sfx.matchWin();
+      else sfx.matchLose();
     } else {
       this.pointsInGame++;
+      if (winner === 'player') sfx.pointWin();
+      else sfx.pointLose();
     }
     ui.toast(msg, res === 'match' ? 2400 : 1600);
 
@@ -282,16 +302,14 @@ export class MatchMode {
     if (!reachable) {
       if (this.whiffCooldown <= 0) {
         this.logger.logWhiff();
+        sfx.whiff();
         this.whiffCooldown = 0.5;
         this.player.startSwing('forehand');
       }
       return;
     }
 
-    let type: ShotType;
-    if (b.pos.y > 1.75 || (swing.overhead && b.pos.y > 1.2)) type = 'smash';
-    else if (this.bounceCount === 0) type = 'volley';
-    else type = dx >= 0 ? 'forehand' : 'backhand';
+    const type = classifySwing(b.pos.y, dx, this.bounceCount, swing);
 
     const quality = clamp(
       1 - (Math.abs(dx) / REACH_X) * 0.45 - (Math.abs(dz) / REACH_Z) * 0.45,
@@ -301,11 +319,35 @@ export class MatchMode {
     // <0 = golpeó antes de tiempo (bola lejos), >0 = tarde (bola encima)
     const timing = b.pos.z - (p.z - 0.5);
 
-    const aim = {
-      x: clamp(swing.dir * 2.8 + (Math.random() - 0.5), -4.5, 4.5),
-      z: type === 'smash' ? 4 + Math.random() * 4 : 3 + Math.random() * 4.5,
-    };
-    this.executeHit('player', type, quality, aim, timing);
+    this.executeHit('player', type, quality, this.aimFor(type, swing.dir), timing);
+  }
+
+  /** Objetivo del golpe según su tipo (z bajo = profundo en campo CPU). */
+  private aimFor(type: ShotType, dir: number): { x: number; z: number } {
+    switch (type) {
+      case 'vibora':
+        // Cruzada y tensa hacia el cristal lateral
+        return {
+          x: clamp(dir * 3.9 + (Math.random() - 0.5) * 0.8, -4.6, 4.6),
+          z: 3.5 + Math.random() * 2.5,
+        };
+      case 'bandeja':
+        // Profunda y controlada, a los pies del fondo rival
+        return {
+          x: clamp(dir * 2.2 + (Math.random() - 0.5), -4, 4),
+          z: 1.8 + Math.random() * 2.2,
+        };
+      case 'smash':
+        return {
+          x: clamp(dir * 2.8 + (Math.random() - 0.5), -4.5, 4.5),
+          z: 4 + Math.random() * 4,
+        };
+      default:
+        return {
+          x: clamp(dir * 2.8 + (Math.random() - 0.5), -4.5, 4.5),
+          z: 3 + Math.random() * 4.5,
+        };
+    }
   }
 
   private executeHit(
@@ -317,8 +359,16 @@ export class MatchMode {
   ): void {
     const entity = side === 'player' ? this.player : this.cpu;
     this.ball.vel = computeShotVelocity(this.ball.pos, aim, type, quality);
+    // La víbora sale con efecto: curva en el aire y escupe en el bote
+    this.ball.spin =
+      type === 'vibora' ? Math.sign(this.ball.vel.x || 1) * SHOT_PARAMS.vibora.spin : 0;
     this.ball.active = true;
     entity.startSwing(type);
+
+    sfx.hit(type);
+    this.opts.renderer.burst(this.ball.pos, '255, 235, 130', 6, 2.4);
+    if (type === 'smash') this.opts.renderer.shake(7);
+    else if (type === 'vibora') this.opts.renderer.shake(5);
 
     this.logger.logShot({
       by: side, type, quality, timing,

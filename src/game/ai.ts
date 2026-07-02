@@ -89,8 +89,15 @@ export class CpuAi {
 
   private chooseShot(): ShotType {
     const b = this.ball;
-    if (b.pos.y > 1.75) return 'smash';
-    if (this.hooks.bounceCount() === 0) return 'volley';
+    if (b.pos.y > 1.7) {
+      // Bola muy alta: remate. Media altura: bandeja (control) o víbora (agresiva).
+      if (b.pos.y > 2.15) return 'smash';
+      return Math.random() < 0.55 ? 'bandeja' : 'vibora';
+    }
+    // La CPU está de cara al jugador: su derecha queda en -x
+    if (this.hooks.bounceCount() === 0) {
+      return b.pos.x <= this.entity.x ? 'volleyFh' : 'volleyBh';
+    }
     return b.pos.x <= this.entity.x ? 'forehand' : 'backhand';
   }
 

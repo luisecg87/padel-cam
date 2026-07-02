@@ -4,6 +4,8 @@ import { PracticeMode } from './modes/practice';
 import { Ball } from './game/ball';
 import { PlayerEntity } from './game/player';
 import { analyzeMatch } from './analysis/coach';
+import { clearSessions, loadSessions, pendingCorrections, saveSession } from './analysis/progress';
+import { SHOT_NAMES } from './types';
 import { PoseTracker } from './camera/pose';
 import { CameraControl } from './camera/gestures';
 import { runCalibration } from './camera/calibration';
@@ -102,8 +104,15 @@ async function startMatch(): Promise<void> {
         score.winner === 'player'
           ? `🏆 ¡Ganaste ${score.games.player}-${score.games.cpu}!`
           : `Perdiste ${score.games.player}-${score.games.cpu}… ¡la próxima cae!`;
+      const saved = saveSession({
+        date: Date.now(),
+        mode: 'match',
+        title: `Partido ${score.games.player}-${score.games.cpu}`,
+        stats: report.stats,
+        tips: report.tips,
+      });
       ui.setCamPreviewVisible(false);
-      ui.showReport(title, report);
+      ui.showReport(title, report, saved);
     },
     onQuit: backToMenu,
   });
@@ -129,17 +138,39 @@ async function startPractice(): Promise<void> {
     controlMode: ui.settings.control,
     drill: ui.settings.drill,
     onFinish: (report) => {
+      const drill = ui.settings.drill;
+      const drillName =
+        drill === 'mixto' ? 'golpes variados' : drill === 'volley' ? 'voleas' : SHOT_NAMES[drill];
+      const saved = saveSession({
+        date: Date.now(),
+        mode: 'practice',
+        title: `Práctica de ${drillName}`,
+        stats: report.stats,
+        tips: report.tips,
+      });
       ui.setCamPreviewVisible(false);
-      ui.showReport('🎯 Informe de práctica', report);
+      ui.showReport('🎯 Informe de práctica', report, saved);
     },
   });
   currentMode = practice;
   practice.start();
 }
 
+function showProgress(): void {
+  const sessions = loadSessions();
+  ui.showProgress(sessions, pendingCorrections(sessions));
+}
+
 ui.onStartMatch = () => void startMatch();
 ui.onStartPractice = () => void startPractice();
 ui.onQuit = backToMenu;
+ui.onShowProgress = showProgress;
+ui.onClearProgress = () => {
+  if (confirm('¿Borrar todo tu historial de informes y correcciones?')) {
+    clearSessions();
+    showProgress();
+  }
+};
 ui.onAgain = () => {
   ui.show('none');
   if (lastModeWasMatch) void startMatch();

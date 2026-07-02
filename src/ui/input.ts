@@ -2,7 +2,8 @@
 
 export interface SwingEvent {
   dir: -1 | 0 | 1; // hacia dónde se dirige el golpe (izq/centro/dcha)
-  overhead: boolean; // gesto por encima de la cabeza (remate)
+  overhead: boolean; // gesto por encima de la cabeza (remate/bandeja/víbora)
+  power: number; // 0..1: fuerza del gesto (cámara: velocidad de la muñeca)
 }
 
 export type MoveIntent =
@@ -32,6 +33,7 @@ export class KeyboardTouchControl implements ControlAdapter {
         dir: this.keys.has('ArrowLeft') || this.keys.has('KeyA') ? -1
           : this.keys.has('ArrowRight') || this.keys.has('KeyD') ? 1 : 0,
         overhead: this.keys.has('ArrowUp') || this.keys.has('KeyW'),
+        power: 1, // con teclado, ↑/W marca remate; sin ↑ la bola alta sale de bandeja
       });
     }
     if (e.code.startsWith('Arrow')) e.preventDefault();
@@ -53,6 +55,7 @@ export class KeyboardTouchControl implements ControlAdapter {
         this.swings.push({
           dir: rel < -0.33 ? -1 : rel > 0.33 ? 1 : 0,
           overhead: t.clientY < window.innerHeight * 0.35,
+          power: 1,
         });
       }
     }

@@ -10,6 +10,8 @@ export interface StatCard {
 export interface Tip {
   text: string;
   warn: boolean;
+  /** Clave estable para agrupar la misma corrección entre sesiones guardadas. */
+  id?: string;
 }
 
 export interface Report {
@@ -73,6 +75,7 @@ export function analyzeMatch(log: MatchLogger): Report {
 
   if (lateFrac > 0.4 && lateShots >= 3) {
     tips.push({
+      id: 'timing-tarde',
       warn: true,
       text: `Llegaste tarde al ${Math.round(lateFrac * 100)}% de tus golpes. Prepara la pala en cuanto la bola cruce la red y da un paso hacia ella, no la esperes.`,
     });
@@ -90,6 +93,7 @@ export function analyzeMatch(log: MatchLogger): Report {
   }
   if (worst) {
     tips.push({
+      id: `golpe-debil-${worst.type}`,
       warn: true,
       text: `Tu ${SHOT_NAMES[worst.type]} falló el ${Math.round(worst.errRate * 100)}% de las veces. Entrénalo en el Modo Práctica eligiendo ese golpe.`,
     });
@@ -102,6 +106,7 @@ export function analyzeMatch(log: MatchLogger): Report {
     });
   } else if (total >= 8 && netPoints.length <= Math.max(1, total * 0.15)) {
     tips.push({
+      id: 'subir-red',
       warn: true,
       text: 'Casi no subiste a la red: jugaste casi todo desde el fondo. Tras un golpe profundo, avanza hacia la red para cerrar el punto.',
     });
@@ -109,6 +114,7 @@ export function analyzeMatch(log: MatchLogger): Report {
 
   if (doubleFaults >= 2) {
     tips.push({
+      id: 'dobles-faltas',
       warn: true,
       text: `Cometiste ${doubleFaults} dobles faltas. En el segundo saque no busques la esquina: apunta al centro de la caja y asegura.`,
     });
@@ -116,6 +122,7 @@ export function analyzeMatch(log: MatchLogger): Report {
 
   if (log.whiffs >= 3) {
     tips.push({
+      id: 'golpes-al-aire',
       warn: true,
       text: `Diste ${log.whiffs} golpes al aire. Mira la bola hasta el final y golpea cuando esté a la altura de tu cadera, ni antes ni después.`,
     });
@@ -123,6 +130,7 @@ export function analyzeMatch(log: MatchLogger): Report {
 
   if (wallErrors >= 2) {
     tips.push({
+      id: 'juego-pared',
       warn: true,
       text: 'La pared te costó puntos: no golpees la bola pegada al cristal. Deja que salga de la pared y golpéala cuando se separe.',
     });

@@ -1,6 +1,7 @@
 import { Ball, BALL_RADIUS } from './ball';
 import { COURT } from './court';
 import { PlayerEntity } from './player';
+import { isOverheadShot } from '../types';
 import type { Vec3 } from '../types';
 
 // Cámara detrás del jugador (z alto), mirando hacia la pista de la CPU (z bajo).
@@ -31,6 +32,15 @@ const CPU_PALETTE: Palette = {
   hair: '#20242c',
 };
 
+interface Particle {
+  x: number; y: number; z: number;
+  vx: number; vy: number; vz: number;
+  life: number; // segundos restantes
+  maxLife: number;
+  color: string; // "r,g,b"
+  size: number; // radio en metros
+}
+
 export class Renderer {
   canvas: HTMLCanvasElement;
   ctx: CanvasRenderingContext2D;
@@ -38,6 +48,9 @@ export class Renderer {
   H = 0;
   private f = 500;
   private horizonY = 0;
+  private shakeMag = 0;
+  private particles: Particle[] = [];
+  private lastDrawT = 0;
 
   constructor(canvas: HTMLCanvasElement) {
     this.canvas = canvas;
@@ -68,14 +81,79 @@ export class Renderer {
     };
   }
 
+  /** Sacudida de cámara (remates, víboras…). mag en píxeles iniciales. */
+  shake(mag: number): void {
+    this.shakeMag = Math.max(this.shakeMag, mag);
+  }
+
+  /** Chispas/polvo en un punto del mundo. color en formato "r,g,b". */
+  burst(pos: Vec3, color: string, count = 8, speed = 2.2): void {
+    for (let i = 0; i < count; i++) {
+      const a = Math.random() * Math.PI * 2;
+      const v = speed * (0.4 + Math.random() * 0.8);
+      this.particles.push({
+        x: pos.x, y: Math.max(pos.y, 0.03), z: pos.z,
+        vx: Math.cos(a) * v,
+        vy: Math.random() * v * 0.9,
+        vz: Math.sin(a) * v * 0.6,
+        life: 0.35 + Math.random() * 0.3,
+        maxLife: 0.65,
+        color,
+        size: 0.025 + Math.random() * 0.03,
+      });
+    }
+    if (this.particles.length > 220) this.particles.splice(0, this.particles.length - 220);
+  }
+
   draw(ball: Ball, player: PlayerEntity, cpu: PlayerEntity, showBall: boolean): void {
+    const now = performance.now();
+    const dt = this.lastDrawT ? Math.min((now - this.lastDrawT) / 1000, 0.05) : 0.016;
+    this.lastDrawT = now;
+
+    const ctx = this.ctx;
+    ctx.save();
+    if (this.shakeMag > 0.3) {
+      ctx.translate(
+        (Math.random() - 0.5) * this.shakeMag * 2,
+        (Math.random() - 0.5) * this.shakeMag * 2,
+      );
+      this.shakeMag *= Math.exp(-dt * 9);
+    } else {
+      this.shakeMag = 0;
+    }
+
     this.drawBackground();
     this.drawCourt();
     this.drawAvatar(cpu, CPU_PALETTE, true);
     if (showBall && ball.pos.z <= COURT.netZ) this.drawBall(ball);
     this.drawNet();
     if (showBall && ball.pos.z > COURT.netZ) this.drawBall(ball);
+    this.drawParticles(dt);
     this.drawAvatar(player, PLAYER_PALETTE, false);
+    ctx.restore();
+  }
+
+  private drawParticles(dt: number): void {
+    const ctx = this.ctx;
+    for (let i = this.particles.length - 1; i >= 0; i--) {
+      const p = this.particles[i];
+      p.life -= dt;
+      if (p.life <= 0) {
+        this.particles.splice(i, 1);
+        continue;
+      }
+      p.vy -= 6 * dt;
+      p.x += p.vx * dt;
+      p.y += p.vy * dt;
+      p.z += p.vz * dt;
+      if (p.y < 0.02) { p.y = 0.02; p.vy = Math.abs(p.vy) * 0.3; }
+      const pr = this.project(p.x, p.y, p.z);
+      const alpha = Math.min(p.life / p.maxLife, 1) * 0.85;
+      ctx.fillStyle = `rgba(${p.color}, ${alpha.toFixed(3)})`;
+      ctx.beginPath();
+      ctx.arc(pr.x, pr.y, Math.max(p.size * pr.s, 1), 0, Math.PI * 2);
+      ctx.fill();
+    }
   }
 
   private drawBackground(): void {
@@ -379,10 +457,12 @@ export class Renderer {
     let armAngle: number;
     if (swinging) {
       const t = p.swingT;
-      if (p.swingType === 'smash') {
-        armAngle = -Math.PI * 0.75 + t * Math.PI * 1.1;
+      if (p.swingType !== null && isOverheadShot(p.swingType)) {
+        // Remate/bandeja/víbora: brazo desde arriba; la bandeja es más contenida
+        const range = p.swingType === 'bandeja' ? 0.85 : 1.1;
+        armAngle = -Math.PI * 0.75 + t * Math.PI * range;
       } else {
-        const dir = p.swingType === 'backhand' ? -1 : 1;
+        const dir = p.swingType === 'backhand' || p.swingType === 'volleyBh' ? -1 : 1;
         armAngle = dir * (-2.1 + t * 3.1);
       }
     } else {
