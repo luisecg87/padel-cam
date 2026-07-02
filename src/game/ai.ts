@@ -34,10 +34,16 @@ export class CpuAi {
   private missThisBall = false;
   private incoming = false;
 
-  constructor(entity: PlayerEntity, ball: Ball, difficulty: Difficulty, hooks: AiHooks) {
+  constructor(
+    entity: PlayerEntity,
+    ball: Ball,
+    difficulty: Difficulty,
+    hooks: AiHooks,
+    override?: Partial<AiParams>,
+  ) {
     this.entity = entity;
     this.ball = ball;
-    this.params = AI_PARAMS[difficulty];
+    this.params = { ...AI_PARAMS[difficulty], ...override };
     this.hooks = hooks;
     this.entity.speed = this.params.speed;
   }

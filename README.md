@@ -4,16 +4,24 @@ Juego de pádel para el navegador que se controla **con tu cuerpo a través de l
 
 ## Modos de juego
 
-- **🏆 Partido vs CPU** — reglas reales de pádel: saque diagonal con dos intentos, punto de oro, rebotes legales en las paredes de cristal, set a 6 juegos. Tres niveles de dificultad.
-- **🎯 Modo práctica** — máquina lanza-bolas con drills de derecha, revés, volea y remate, y corrección inmediata tras cada bola.
+- **🎾 Partido vs CPU** — reglas reales de pádel: saque diagonal con dos intentos, punto de oro, rebotes legales en las paredes de cristal, set a 6 juegos. Tres niveles de dificultad.
+- **🏟️ Torneo** — tres rondas contra rivales con personalidad propia (Rubén "Manoplas", Marta "La Muralla" y El Káiser), sets cortos a 3 juegos y trofeos que quedan en tu palmarés.
+- **🎯 Modo práctica** — máquina lanza-bolas con drills de derecha, revés, voleas (derecha/revés), bandeja, víbora y remate, con corrección inmediata tras cada bola.
 - **🧑‍🏫 Informe del entrenador** — al final de cada partido o práctica: estadísticas (winners, errores por golpe, puntos en la red…) y consejos personalizados en español.
+- **📈 Mi progreso** — informes y correcciones guardados en el navegador, correcciones recurrentes pendientes, racha de días entrenando y "entrenamiento del día" sugerido por el coach.
+
+## Golpes
+
+Derecha, revés, volea de derecha, volea de revés, bandeja, víbora (con efecto real que curva la bola) y remate. Con cámara, la velocidad y dirección del gesto deciden el golpe: brazo arriba suave = bandeja, latigazo = remate, en diagonal = víbora.
+
+Los puntos espectaculares se celebran con **repetición a cámara lenta**, público que salta en las gradas y sonido de estadio (100% sintetizado con WebAudio, sin assets).
 
 ## Controles
 
 | Modo | Cómo se juega |
 |------|---------------|
-| 📷 **Cámara** (recomendado) | Muévete a los lados para desplazarte · mueve el brazo rápido para golpear · brazo por encima de la cabeza = remate |
-| ⌨️ **Teclado** | Flechas/WASD para moverte · ESPACIO para golpear (mantén ← o → para dirigir el golpe) |
+| 📷 **Cámara** (recomendado) | Muévete a los lados para desplazarte · mueve el brazo rápido para golpear · brazo por encima de la cabeza = remate/bandeja/víbora según el gesto |
+| ⌨️ **Teclado** | Flechas/WASD para moverte · ESPACIO para golpear (←/→ dirigen · con globo: ↑+ESPACIO remate, ←/→+ESPACIO víbora, solo ESPACIO bandeja) |
 | 📱 **Táctil** | Mitad izquierda de la pantalla para moverte · toca la mitad derecha para golpear |
 
 El control por cámara usa [MediaPipe Pose](https://developers.google.com/mediapipe) directamente en el navegador (necesita internet la primera vez para descargar el modelo).
@@ -35,8 +43,9 @@ Stack: Vite + TypeScript vanilla + Canvas 2D + `@mediapipe/tasks-vision`. Sin ba
 src/
   game/      pista, bola, física, IA rival, puntuación, render 2.5D, partido
   camera/    tracking de pose, detección de gestos, calibración
-  modes/     modo práctica
-  analysis/  registro de golpes y motor de consejos del entrenador
+  modes/     modo práctica y torneo
+  analysis/  registro de golpes, consejos del entrenador y progreso guardado
+  audio/     efectos de sonido sintetizados (WebAudio)
   ui/        pantallas, HUD, control por teclado/táctil
 ```
 

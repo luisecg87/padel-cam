@@ -9,19 +9,35 @@ import { MatchLogger } from '../analysis/logger';
 import { sfx } from '../audio/sfx';
 import { ui } from '../ui/screens';
 import { clamp, opponent } from '../types';
+import { CPU_PALETTE } from './render';
+import type { Rival } from '../modes/tournament';
 import type { ControlAdapter, SwingEvent } from '../ui/input';
 import type { ControlMode, Difficulty, Side, ShotType } from '../types';
 
-type MatchState = 'preServe' | 'rally' | 'pointOver' | 'done';
+type MatchState = 'preServe' | 'rally' | 'pointOver' | 'replay' | 'done';
 
 export interface MatchOptions {
   renderer: Renderer;
   control: ControlAdapter;
   controlMode: ControlMode;
   difficulty: Difficulty;
+  /** Juegos para ganar el set (por defecto 6; el torneo usa sets cortos). */
+  targetGames?: number;
+  /** Rival del torneo: nombre, camiseta y ajustes de IA propios. */
+  rival?: Rival | null;
   onFinish(logger: MatchLogger, score: Score): void;
   onQuit(): void;
 }
+
+/** Instantánea de un frame para la repetición a cámara lenta. */
+interface ReplayFrame {
+  bx: number; by: number; bz: number;
+  px: number; pz: number; psw: ShotType | null; pst: number;
+  cx: number; cz: number; csw: ShotType | null; cst: number;
+}
+
+const REPLAY_SPEED = 0.45; // cámara lenta
+const MAX_FRAMES = 400; // ~6,6 s a 60 fps
 
 export class MatchMode {
   private opts: MatchOptions;
@@ -29,7 +45,7 @@ export class MatchMode {
   private player = new PlayerEntity('player');
   private cpu = new PlayerEntity('cpu');
   private ai: CpuAi;
-  private score = new Score();
+  private score: Score;
   logger = new MatchLogger();
 
   private state: MatchState = 'preServe';
@@ -53,13 +69,21 @@ export class MatchMode {
   private lastT = 0;
   private running = false;
 
+  // Repetición a cámara lenta de puntos espectaculares
+  private frames: ReplayFrame[] = [];
+  private postFrames = 0; // frames grabados tras el fin del punto (deja ver el bote final)
+  private pendingReplay = false;
+  private finishAfterReplay = false;
+  private replayT = 0;
+
   constructor(opts: MatchOptions) {
     this.opts = opts;
+    this.score = new Score(opts.targetGames ?? 6);
     this.ai = new CpuAi(this.cpu, this.ball, opts.difficulty, {
       canHit: () => this.cpuCanHit(),
       doHit: (type, aim, quality) => this.executeHit('cpu', type, quality, aim, 0),
       bounceCount: () => this.bounceCount,
-    });
+    }, opts.rival?.ai);
     if (opts.controlMode === 'camera') this.player.speed = 8;
 
     this.ball.callbacks = {
@@ -81,8 +105,13 @@ export class MatchMode {
     };
   }
 
+  private get rivalName(): string {
+    return this.opts.rival?.name ?? 'la CPU';
+  }
+
   start(): void {
     this.running = true;
+    this.opts.renderer.cpuPalette = this.opts.rival?.palette ?? CPU_PALETTE;
     ui.setHudVisible(true);
     this.updateScoreHud();
     this.setupServe();
@@ -102,6 +131,7 @@ export class MatchMode {
     this.running = false;
     cancelAnimationFrame(this.raf);
     ui.setHudVisible(false);
+    ui.setReplay(false);
   }
 
   // ---------- Saque ----------
@@ -133,11 +163,14 @@ export class MatchMode {
     this.logger.beginPoint(server);
     this.ai.resetPoint();
     this.cpuServeTimer = 1.3;
+    this.frames.length = 0;
+    this.postFrames = 0;
+    this.pendingReplay = false;
 
     ui.setServeInfo(
       server === 'player'
         ? `Tu saque (${this.serveNumber}º) · golpea para sacar`
-        : `Saque de la CPU (${this.serveNumber}º)`,
+        : `Saque de ${this.rivalName} (${this.serveNumber}º)`,
     );
   }
 
@@ -236,11 +269,20 @@ export class MatchMode {
     this.state = 'pointOver';
     this.ball.active = false;
     this.logger.endPoint(winner, reason);
+    this.opts.renderer.exciteCrowd(winner === 'player' ? 1 : 0.45);
+
+    // ¿Merece repetición? Winner propio tras un intercambio, o remate/víbora ganadora
+    const pt = this.logger.points[this.logger.points.length - 1];
+    const lastShot = pt.shots[pt.shots.length - 1];
+    this.pendingReplay =
+      !!lastShot &&
+      lastShot.by === winner &&
+      (pt.shots.length >= 3 || lastShot.type === 'smash' || lastShot.type === 'vibora');
 
     const res = this.score.addPoint(winner);
     this.updateScoreHud();
 
-    let msg = winner === 'player' ? '¡Punto para ti!' : 'Punto para la CPU';
+    let msg = winner === 'player' ? '¡Punto para ti!' : `Punto para ${this.rivalName}`;
     msg += `\n(${reason})`;
     if (res === 'game') {
       msg += '\n🎾 ¡Juego!';
@@ -249,7 +291,12 @@ export class MatchMode {
       if (winner === 'player') sfx.gameWin();
       else sfx.pointLose();
     } else if (res === 'match') {
-      msg = this.score.winner === 'player' ? '🏆 ¡PARTIDO GANADO!' : '🤖 La CPU gana el partido';
+      msg =
+        this.score.winner === 'player'
+          ? '🏆 ¡PARTIDO GANADO!'
+          : this.opts.rival
+            ? `😤 ${this.rivalName} gana el partido`
+            : '🤖 La CPU gana el partido';
       if (this.score.winner === 'player') sfx.matchWin();
       else sfx.matchLose();
     } else {
@@ -386,7 +433,13 @@ export class MatchMode {
 
   private update(dt: number): void {
     this.whiffCooldown -= dt;
-    this.opts.control.update(dt);
+    this.opts.control.update(dt); // también en repetición: mantiene vivo el preview de cámara
+
+    if (this.state === 'replay') {
+      this.opts.control.consumeSwings(); // descartar golpes durante la repetición
+      this.updateReplay(dt);
+      return;
+    }
 
     for (const swing of this.opts.control.consumeSwings()) {
       this.tryPlayerSwing(swing);
@@ -421,12 +474,16 @@ export class MatchMode {
     this.player.update(dt);
     this.cpu.update(dt);
     this.ball.update(dt);
+    this.recordFrame();
 
     // Transición tras el punto / falta
     if ((this.state === 'pointOver' || this.state === 'done') && this.pointOverTimer > 0) {
       this.pointOverTimer -= dt;
       if (this.pointOverTimer <= 0) {
-        if (this.state === 'done') {
+        const wasDone = this.state === 'done';
+        if (this.pendingReplay && this.frames.length > 60) {
+          this.startReplay(wasDone);
+        } else if (wasDone) {
           this.stop();
           this.opts.onFinish(this.logger, this.score);
         } else {
@@ -434,5 +491,56 @@ export class MatchMode {
         }
       }
     }
+  }
+
+  // ---------- Repetición a cámara lenta ----------
+
+  private recordFrame(): void {
+    if (this.state === 'rally') {
+      this.postFrames = 0;
+    } else if (this.state === 'pointOver' || this.state === 'done') {
+      // Unos frames extra tras el punto para que se vea el bote decisivo
+      if (this.postFrames >= 20) return;
+      this.postFrames++;
+    } else {
+      return;
+    }
+    this.frames.push({
+      bx: this.ball.pos.x, by: this.ball.pos.y, bz: this.ball.pos.z,
+      px: this.player.x, pz: this.player.z, psw: this.player.swingType, pst: this.player.swingT,
+      cx: this.cpu.x, cz: this.cpu.z, csw: this.cpu.swingType, cst: this.cpu.swingT,
+    });
+    if (this.frames.length > MAX_FRAMES) this.frames.shift();
+  }
+
+  private startReplay(finishAfter: boolean): void {
+    this.pendingReplay = false;
+    this.finishAfterReplay = finishAfter;
+    this.state = 'replay';
+    this.replayT = 0;
+    this.ball.trail.length = 0;
+    ui.setReplay(true);
+  }
+
+  private updateReplay(dt: number): void {
+    this.replayT += dt * REPLAY_SPEED;
+    const f = this.frames[Math.floor(this.replayT * 60)];
+    if (!f) {
+      // Fin de la repetición: seguir con el partido
+      ui.setReplay(false);
+      this.frames.length = 0;
+      if (this.finishAfterReplay) {
+        this.stop();
+        this.opts.onFinish(this.logger, this.score);
+      } else {
+        this.setupServe();
+      }
+      return;
+    }
+    this.ball.pos.x = f.bx; this.ball.pos.y = f.by; this.ball.pos.z = f.bz;
+    this.player.x = f.px; this.player.z = f.pz;
+    this.player.swingType = f.psw; this.player.swingT = f.pst;
+    this.cpu.x = f.cx; this.cpu.z = f.cz;
+    this.cpu.swingType = f.csw; this.cpu.swingT = f.cst;
   }
 }

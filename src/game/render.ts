@@ -8,7 +8,7 @@ import type { Vec3 } from '../types';
 const CAM_Z = 26;
 const CAM_H = 4.8;
 
-interface Palette {
+export interface Palette {
   shirt: string;
   shirtDark: string;
   shorts: string;
@@ -24,13 +24,19 @@ const PLAYER_PALETTE: Palette = {
   hair: '#3a2a1c',
 };
 
-const CPU_PALETTE: Palette = {
+export const CPU_PALETTE: Palette = {
   shirt: '#f0764f',
   shirtDark: '#bd4a2c',
   shorts: '#3a2734',
   skin: '#f0c9a0',
   hair: '#20242c',
 };
+
+// Colores apagados para el público de las gradas
+const CROWD_COLORS = [
+  '#c9a284', '#7fa3c4', '#c48a8a', '#93b887',
+  '#c4b47f', '#a08ac4', '#d8d3ca', '#7fc4ba',
+];
 
 interface Particle {
   x: number; y: number; z: number;
@@ -51,6 +57,9 @@ export class Renderer {
   private shakeMag = 0;
   private particles: Particle[] = [];
   private lastDrawT = 0;
+  private crowdExcite = 0;
+  /** Camiseta del rival: los rivales del torneo tienen su propio color. */
+  cpuPalette: Palette = CPU_PALETTE;
 
   constructor(canvas: HTMLCanvasElement) {
     this.canvas = canvas;
@@ -123,14 +132,54 @@ export class Renderer {
     }
 
     this.drawBackground();
+    this.drawCrowd(dt);
     this.drawCourt();
-    this.drawAvatar(cpu, CPU_PALETTE, true);
+    this.drawAvatar(cpu, this.cpuPalette, true);
     if (showBall && ball.pos.z <= COURT.netZ) this.drawBall(ball);
     this.drawNet();
     if (showBall && ball.pos.z > COURT.netZ) this.drawBall(ball);
     this.drawParticles(dt);
     this.drawAvatar(player, PLAYER_PALETTE, false);
     ctx.restore();
+  }
+
+  /** El público se pone en pie: 1 = ovación completa. Decae solo. */
+  exciteCrowd(amount: number): void {
+    this.crowdExcite = Math.min(1, this.crowdExcite + amount);
+  }
+
+  /** Gradas con público detrás de la pared de fondo; salta con los puntos. */
+  private drawCrowd(dt: number): void {
+    this.crowdExcite *= Math.exp(-dt * 0.8);
+    const ctx = this.ctx;
+    const t = performance.now() / 1000;
+
+    // Banda oscura de la grada
+    const bandTop = this.project(0, 8.6, -6.2).y;
+    const bandBottom = this.project(0, 3.4, -1.2).y;
+    const g = ctx.createLinearGradient(0, bandTop, 0, bandBottom);
+    g.addColorStop(0, '#07111f');
+    g.addColorStop(1, '#0d2035');
+    ctx.fillStyle = g;
+    ctx.fillRect(0, bandTop, this.W, bandBottom - bandTop);
+
+    for (let row = 0; row < 3; row++) {
+      const z = -1.6 - row * 1.8;
+      const y = 4.4 + row * 1.15;
+      for (let i = 0; i < 26; i++) {
+        const x = -8.6 + i * 0.69 + (row % 2) * 0.35;
+        const phase = i * 1.7 + row * 2.3;
+        const idle = Math.sin(t * 1.6 + phase) * 0.035;
+        const jump = Math.max(0, Math.sin(t * 8 + phase)) * 0.32 * this.crowdExcite;
+        const p = this.project(x, y + idle + jump, z);
+        const r = 0.155 * p.s;
+        ctx.fillStyle = CROWD_COLORS[(i * 7 + row * 13) % CROWD_COLORS.length];
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, r, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.fillRect(p.x - r * 0.95, p.y + r * 0.55, r * 1.9, r * 1.7);
+      }
+    }
   }
 
   private drawParticles(dt: number): void {

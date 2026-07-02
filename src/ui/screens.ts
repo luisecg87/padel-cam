@@ -1,4 +1,5 @@
 import { sfx } from '../audio/sfx';
+import { RIVALS, ROUND_NAMES, TOURNEY_GAMES } from '../modes/tournament';
 import type { Report } from '../analysis/coach';
 import type { Correction, DrillSuggestion, ProgressSummary, SavedSession } from '../analysis/progress';
 import type { ControlMode, Difficulty, DrillType } from '../types';
@@ -9,7 +10,9 @@ export interface MenuSettings {
   drill: DrillType;
 }
 
-type ScreenId = 'menu' | 'calib' | 'report' | 'progress' | 'none';
+type ScreenId = 'menu' | 'calib' | 'report' | 'progress' | 'tourney' | 'none';
+
+export type TourneyPhase = 'play' | 'lost' | 'champion';
 
 const $ = <T extends HTMLElement = HTMLElement>(sel: string): T => {
   const el = document.querySelector<T>(sel);
@@ -30,8 +33,12 @@ class UI {
   onClearProgress: (() => void) | null = null;
   onCoachTrain: (() => void) | null = null;
   onMenuShown: (() => void) | null = null;
+  onStartTournament: (() => void) | null = null;
+  onTourneyGo: (() => void) | null = null;
+  onTourneyQuit: (() => void) | null = null;
 
   private toastTimer: number | null = null;
+  private tourneyPhase: TourneyPhase = 'play';
 
   init(): void {
     this.wireOptionRow('#controlRow', 'control', 'control');
@@ -50,6 +57,12 @@ class UI {
     $('#btnProgressBack').addEventListener('click', () => this.show('menu'));
     $('#btnProgressClear').addEventListener('click', () => this.onClearProgress?.());
     $('#btnCoachTrain').addEventListener('click', () => this.onCoachTrain?.());
+    $('#btnTournament').addEventListener('click', () => this.onStartTournament?.());
+    $('#btnTourneyGo').addEventListener('click', () => {
+      if (this.tourneyPhase === 'play') this.onTourneyGo?.();
+      else this.onTourneyQuit?.();
+    });
+    $('#btnTourneyQuit').addEventListener('click', () => this.onTourneyQuit?.());
 
     // Sonido: desbloquear el AudioContext con el primer gesto y clicks de UI
     const btnSound = $('#btnSound') as HTMLButtonElement;
@@ -102,7 +115,7 @@ class UI {
   }
 
   /** Tarjeta "entrenamiento del día" del menú: racha + drill sugerido. */
-  setCoach(summary: ProgressSummary, suggestion: DrillSuggestion | null): void {
+  setCoach(summary: ProgressSummary, suggestion: DrillSuggestion | null, trophies = 0): void {
     const card = $('#coachCard');
     if (summary.totalSessions === 0) {
       card.hidden = true;
@@ -110,11 +123,13 @@ class UI {
     }
     card.hidden = false;
     const fire = summary.streakDays >= 3 ? '🔥🔥' : '🔥';
+    const cup = trophies > 0 ? `🏆 ${trophies} · ` : '';
     $('#coachStreak').textContent =
-      summary.streakDays > 0
+      cup +
+      (summary.streakDays > 0
         ? `${fire} Racha: ${summary.streakDays} ${summary.streakDays === 1 ? 'día' : 'días'} entrenando` +
           (summary.trainedToday ? ' · ¡hoy ya cuenta!' : ' · entrena hoy para no perderla')
-        : `${summary.totalSessions} sesiones guardadas · entrena hoy para empezar una racha`;
+        : `${summary.totalSessions} sesiones guardadas · entrena hoy para empezar una racha`);
     const tip = $('#coachTip');
     const btn = $('#btnCoachTrain') as HTMLButtonElement;
     if (suggestion) {
@@ -151,6 +166,44 @@ class UI {
     this.toastTimer = window.setTimeout(() => el.classList.remove('show'), ms);
   }
 
+  setReplay(v: boolean): void {
+    $('#replayBadge').classList.toggle('show', v);
+  }
+
+  /** Pantalla del torneo: presentación de ronda, eliminación o título de campeón. */
+  showTourney(round: number, phase: TourneyPhase, trophies = 0): void {
+    this.tourneyPhase = phase;
+    const rival = RIVALS[Math.min(round, RIVALS.length - 1)];
+
+    if (phase === 'play') {
+      $('#tourneyTitle').textContent = `🏟️ ${ROUND_NAMES[round]} · te espera ${rival.name}`;
+      $('#tourneySub').textContent = `${rival.tagline} (set corto: a ${TOURNEY_GAMES} juegos)`;
+      ($('#btnTourneyGo') as HTMLButtonElement).textContent = '¡A jugar!';
+      $('#btnTourneyQuit').hidden = false;
+    } else if (phase === 'lost') {
+      $('#tourneyTitle').textContent = '💔 Eliminado del torneo';
+      $('#tourneySub').textContent = `${rival.name} te mandó a casa. Entrena en el Modo Práctica y vuelve a por el título.`;
+      ($('#btnTourneyGo') as HTMLButtonElement).textContent = 'Volver al menú';
+      $('#btnTourneyQuit').hidden = true;
+    } else {
+      $('#tourneyTitle').textContent = '🏆 ¡CAMPEÓN DEL TORNEO!';
+      $('#tourneySub').textContent = `El Káiser ha caído. Trofeos en tu palmarés: ${trophies} 🏆`;
+      ($('#btnTourneyGo') as HTMLButtonElement).textContent = 'Volver al menú';
+      $('#btnTourneyQuit').hidden = true;
+    }
+
+    $('#tourneyBracket').innerHTML = RIVALS.map((r, i) => {
+      let icon: string;
+      if (phase === 'champion' || i < round) icon = '✅';
+      else if (i === round) icon = phase === 'lost' ? '❌' : '🎾';
+      else icon = '🔒';
+      const now = i === round && phase === 'play';
+      return `<div class="session-card${now ? ' current-round' : ''}"><div class="session-head"><span>${icon} ${ROUND_NAMES[i]}</span><span class="session-date">${r.name}</span></div></div>`;
+    }).join('');
+
+    this.show('tourney');
+  }
+
   setDrillHud(html: string | null): void {
     const el = $('#drillHud');
     if (html === null) {
@@ -185,7 +238,9 @@ class UI {
     this.show('report');
   }
 
-  showProgress(sessions: SavedSession[], corrections: Correction[]): void {
+  showProgress(sessions: SavedSession[], corrections: Correction[], trophies = 0): void {
+    $('#progressTrophies').textContent =
+      trophies > 0 ? `🏆 Torneos ganados: ${trophies}` : '';
     const cEl = $('#progressCorrections');
     if (corrections.length === 0) {
       cEl.innerHTML =

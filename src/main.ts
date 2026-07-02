@@ -5,13 +5,17 @@ import { Ball } from './game/ball';
 import { PlayerEntity } from './game/player';
 import { analyzeMatch } from './analysis/coach';
 import {
+  addTrophy,
   clearSessions,
   loadSessions,
+  loadTrophies,
   pendingCorrections,
   saveSession,
   suggestDrill,
   summarize,
 } from './analysis/progress';
+import { RIVALS, ROUND_NAMES, TOURNEY_GAMES } from './modes/tournament';
+import { sfx } from './audio/sfx';
 import { SHOT_NAMES } from './types';
 import { PoseTracker } from './camera/pose';
 import { CameraControl } from './camera/gestures';
@@ -49,11 +53,14 @@ function stopIdle(): void {
   cancelAnimationFrame(idleRaf);
 }
 
+let tourneyRound = -1; // -1 = sin torneo en curso
+
 function backToMenu(): void {
   currentMode?.stop();
   currentMode = null;
   currentControl?.destroy();
   currentControl = null;
+  tourneyRound = -1;
   ui.setCamPreviewVisible(false);
   ui.setDrillHud(null);
   ui.show('menu');
@@ -163,16 +170,73 @@ async function startPractice(): Promise<void> {
   practice.start();
 }
 
+// ---- Torneo: tres rondas contra rivales con personalidad ----
+
+async function startTournament(): Promise<void> {
+  stopIdle();
+  const control = await buildControl();
+  if (!control) {
+    backToMenu();
+    return;
+  }
+  currentControl = control;
+  tourneyRound = 0;
+  ui.setCamPreviewVisible(false);
+  ui.showTourney(0, 'play');
+}
+
+function playTourneyRound(): void {
+  if (tourneyRound < 0 || !currentControl) return;
+  const round = tourneyRound;
+  const rival = RIVALS[round];
+  ui.show('none');
+  ui.setCamPreviewVisible(ui.settings.control === 'camera');
+
+  const match = new MatchMode({
+    renderer,
+    control: currentControl,
+    controlMode: ui.settings.control,
+    difficulty: rival.difficulty,
+    targetGames: TOURNEY_GAMES,
+    rival,
+    onFinish: (logger, score) => {
+      const report = analyzeMatch(logger);
+      saveSession({
+        date: Date.now(),
+        mode: 'match',
+        title: `Torneo · ${ROUND_NAMES[round]} vs ${rival.name} ${score.games.player}-${score.games.cpu}`,
+        stats: report.stats,
+        tips: report.tips,
+      });
+      ui.setCamPreviewVisible(false);
+      if (score.winner !== 'player') {
+        ui.showTourney(round, 'lost');
+      } else if (round === RIVALS.length - 1) {
+        const trophies = addTrophy();
+        sfx.cheer(true);
+        ui.showTourney(round, 'champion', trophies);
+      } else {
+        tourneyRound = round + 1;
+        ui.showTourney(tourneyRound, 'play');
+      }
+      currentMode = null;
+    },
+    onQuit: backToMenu,
+  });
+  currentMode = match;
+  match.start();
+}
+
 function showProgress(): void {
   const sessions = loadSessions();
-  ui.showProgress(sessions, pendingCorrections(sessions));
+  ui.showProgress(sessions, pendingCorrections(sessions), loadTrophies());
 }
 
 let lastSuggestion: ReturnType<typeof suggestDrill> = null;
 function refreshCoachCard(): void {
   const sessions = loadSessions();
   lastSuggestion = suggestDrill(pendingCorrections(sessions));
-  ui.setCoach(summarize(sessions), lastSuggestion);
+  ui.setCoach(summarize(sessions), lastSuggestion, loadTrophies());
 }
 
 ui.onStartMatch = () => void startMatch();
@@ -186,6 +250,9 @@ ui.onClearProgress = () => {
   }
 };
 ui.onMenuShown = refreshCoachCard;
+ui.onStartTournament = () => void startTournament();
+ui.onTourneyGo = playTourneyRound;
+ui.onTourneyQuit = backToMenu;
 ui.onCoachTrain = () => {
   if (!lastSuggestion) return;
   ui.selectDrill(lastSuggestion.drill);

@@ -86,6 +86,28 @@ export function pendingCorrections(sessions: SavedSession[]): Correction[] {
   );
 }
 
+// ---------- Palmarés del torneo ----------
+
+const TROPHY_KEY = 'padelcam.trophies.v1';
+
+export function loadTrophies(): number {
+  try {
+    return Number(localStorage.getItem(TROPHY_KEY)) || 0;
+  } catch {
+    return 0;
+  }
+}
+
+export function addTrophy(): number {
+  const n = loadTrophies() + 1;
+  try {
+    localStorage.setItem(TROPHY_KEY, String(n));
+  } catch {
+    /* almacenamiento no disponible */
+  }
+  return n;
+}
+
 // ---------- Racha y plan del día (bucle de retención) ----------
 
 export interface ProgressSummary {

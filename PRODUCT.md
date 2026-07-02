@@ -90,6 +90,10 @@ Reglas de diseño del paywall:
 - Correcciones persistentes + pantalla "Mi progreso".
 - Entrenamiento del día + racha (motor de retención).
 - Inmersión: sonido, efectos, física con efecto en la víbora.
+- Modo Torneo con rivales con personalidad y palmarés de trofeos
+  (contenido aspiracional: el "final boss" da razón para entrenar).
+- Repetición a cámara lenta y público que reacciona (momentos compartibles,
+  base para el futuro "compartir clip").
 
 **Siguiente (pre-monetización):**
 - Gráficas de evolución por golpe (calidad media semana a semana).

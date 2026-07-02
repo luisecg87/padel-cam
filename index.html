@@ -56,7 +56,8 @@
       </div>
 
       <div class="main-buttons">
-        <button class="big" id="btnMatch">🏆 Partido vs CPU</button>
+        <button class="big" id="btnMatch">🎾 Partido vs CPU</button>
+        <button class="big gold" id="btnTournament">🏟️ Torneo</button>
         <button class="big" id="btnPractice">🎯 Modo Práctica</button>
         <button class="big secondary" id="btnProgress">📈 Mi progreso</button>
       </div>
@@ -87,6 +88,7 @@
       <div id="serveInfo"></div>
       <div id="toast"></div>
       <div id="drillHud"></div>
+      <div id="replayBadge">📺 REPETICIÓN</div>
       <button id="btnQuit" title="Salir">✕</button>
     </div>
 
@@ -104,9 +106,21 @@
       </div>
     </div>
 
+    <!-- Torneo: presentación de ronda y resultado -->
+    <div class="screen" id="tourney">
+      <h2 id="tourneyTitle">🏟️ Torneo Pádel Cam</h2>
+      <p class="hint" id="tourneySub"></p>
+      <div id="tourneyBracket" class="progress-list"></div>
+      <div class="main-buttons">
+        <button class="big" id="btnTourneyGo">¡A jugar!</button>
+        <button class="link" id="btnTourneyQuit">Abandonar torneo</button>
+      </div>
+    </div>
+
     <!-- Progreso e informes guardados -->
     <div class="screen" id="progress">
       <h2>📈 Mi progreso</h2>
+      <p class="hint" id="progressTrophies"></p>
       <h3>📌 Correcciones a trabajar</h3>
       <div id="progressCorrections" class="progress-list"></div>
       <h3>🗂️ Últimas sesiones</h3>
