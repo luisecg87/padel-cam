@@ -208,7 +208,14 @@ class UI {
 
   updateScore(games: string, pointsLabel: string): void {
     $('#scoreGames').textContent = games;
-    $('#scorePoints').textContent = pointsLabel;
+    const p = $('#scorePoints');
+    if (p.textContent && p.textContent !== pointsLabel) {
+      // Microanimación al cambiar el marcador
+      p.classList.remove('bump');
+      void p.offsetWidth; // reinicia la animación
+      p.classList.add('bump');
+    }
+    p.textContent = pointsLabel;
   }
 
   setServeInfo(text: string): void {
