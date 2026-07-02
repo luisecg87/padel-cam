@@ -192,26 +192,28 @@ button {
   border: 1px solid rgba(255,255,255,.13);
   border-radius: 14px;
   overflow: hidden;
-  font-weight: 800;
-  font-size: clamp(.95rem, 3vw, 1.2rem);
+  font-weight: 900;
+  font-size: clamp(1.05rem, 3.6vw, 1.45rem);
+  letter-spacing: .5px;
   white-space: nowrap;
-  box-shadow: 0 6px 24px rgba(0, 4, 12, .45);
+  box-shadow: 0 10px 32px rgba(0, 4, 12, .55);
   font-variant-numeric: tabular-nums;
 }
 #scoreGames {
   color: #ffd166;
-  padding: 8px 16px;
-  background: rgba(255, 209, 102, .07);
-  border-right: 1px solid rgba(255,255,255,.1);
+  padding: 10px 20px;
+  background: rgba(255, 209, 102, .08);
+  border-right: 1px solid rgba(255,255,255,.12);
 }
-#scorePoints { color: #fff; padding: 8px 18px; }
+#scorePoints { color: #fff; padding: 10px 24px; }
 #scorePoints.bump { animation: scoreBump .35s ease; }
 @keyframes scoreBump { 35% { transform: scale(1.18); color: #d9e021; } }
 
 #serveInfo {
-  position: absolute; top: 60px; left: 50%;
+  position: absolute; top: 66px; left: 50%;
   transform: translateX(-50%);
-  font-size: .82rem;
+  font-size: .9rem;
+  font-weight: 600;
   letter-spacing: .4px;
   color: rgba(235, 244, 252, .85);
   background: rgba(6, 14, 26, .5);

@@ -119,8 +119,16 @@ export class Renderer {
     this.canvas.width = this.W * dpr;
     this.canvas.height = this.H * dpr;
     this.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    this.f = Math.min(this.H * 0.98, this.W * 0.6);
-    this.horizonY = this.H * 0.33;
+    // Encuadre adaptativo: en retrato (móvil) la escena baja y llena la
+    // pantalla; en apaisado, focal larga de retransmisión.
+    const portrait = this.H > this.W * 1.2;
+    if (portrait) {
+      this.f = Math.min(this.H * 0.6, this.W * 1.05);
+      this.horizonY = this.H * 0.34;
+    } else {
+      this.f = Math.min(this.H * 0.98, this.W * 0.6);
+      this.horizonY = this.H * 0.33;
+    }
     const g = this.ctx.createRadialGradient(
       this.W / 2, this.H * 0.55, Math.min(this.W, this.H) * 0.45,
       this.W / 2, this.H * 0.55, Math.max(this.W, this.H) * 0.8,
@@ -241,6 +249,40 @@ export class Renderer {
       ctx.arc(s.x * this.W, s.y * this.H, s.r, 0, Math.PI * 2);
       ctx.fill();
     }
+
+    // Tribunas laterales: paredes oscuras que cierran la escena a los lados
+    for (const side of [-1, 1] as const) {
+      const quad = [
+        this.project(side * 9.4, 0, 21),
+        this.project(side * 9.4, 5.2, 21),
+        this.project(side * 9.4, 5.2, -1),
+        this.project(side * 9.4, 0, -1),
+      ];
+      const gT = ctx.createLinearGradient(quad[0].x, 0, quad[3].x, 0);
+      gT.addColorStop(0, '#091524');
+      gT.addColorStop(1, '#0d1e33');
+      ctx.fillStyle = gT;
+      ctx.beginPath();
+      quad.forEach((q, i) => (i === 0 ? ctx.moveTo(q.x, q.y) : ctx.lineTo(q.x, q.y)));
+      ctx.closePath();
+      ctx.fill();
+      // remate superior y divisiones de la tribuna
+      ctx.strokeStyle = 'rgba(120, 155, 195, 0.22)';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(quad[1].x, quad[1].y);
+      ctx.lineTo(quad[2].x, quad[2].y);
+      ctx.stroke();
+      ctx.lineWidth = 1;
+      for (const z of [3, 8, 13, 18]) {
+        const a = this.project(side * 9.4, 0, z);
+        const b = this.project(side * 9.4, 5.2, z);
+        ctx.beginPath();
+        ctx.moveTo(a.x, a.y);
+        ctx.lineTo(b.x, b.y);
+        ctx.stroke();
+      }
+    }
   }
 
   /** Motas de polvo iluminadas: atmósfera sutil delante de todo. */
@@ -271,17 +313,18 @@ export class Renderer {
     ctx.fillStyle = g;
     ctx.fillRect(0, bandTop, this.W, bandBottom - bandTop);
 
-    for (let row = 0; row < 3; row++) {
-      const z = -1.6 - row * 1.8;
-      const y = 4.4 + row * 1.15;
+    for (let row = 0; row < 4; row++) {
+      const z = -1.6 - row * 1.7;
+      const y = 4.4 + row * 1.05;
       // Banda de escalón entre filas: da estructura de grada real
       const s0 = this.project(0, y - 0.62, z + 0.4);
       ctx.fillStyle = `rgba(10, 22, 40, ${(0.55 - row * 0.12).toFixed(2)})`;
       ctx.fillRect(0, s0.y, this.W, Math.max(2.5, 0.1 * s0.s));
 
-      const rowAlpha = 0.62 - row * 0.13;
+      const rowAlpha = 0.62 - row * 0.11;
       for (let i = 0; i < 30; i++) {
         const sd = seed01(i * 31 + row * 7);
+        if (sd < 0.12) continue; // asiento vacío
         const x = -9.6 + i * 0.66 + (row % 2) * 0.33 + (sd - 0.5) * 0.18;
         const phase = i * 1.7 + row * 2.3;
         const idle = Math.sin(t * 1.5 + phase) * 0.03;
@@ -436,12 +479,33 @@ export class Renderer {
       [-hw, L],
     ]);
     ctx.clip();
+    // Variación por zonas: carriles laterales más fríos, pasillo central vivo
+    for (const side of [-1, 1] as const) {
+      this.groundPoly([
+        [side * 3.4, 0],
+        [side * hw, 0],
+        [side * hw, L],
+        [side * 3.4, L],
+      ]);
+      ctx.fillStyle = 'rgba(7, 28, 56, 0.18)';
+      ctx.fill();
+    }
+    this.groundPoly([
+      [-3.4, 0],
+      [3.4, 0],
+      [3.4, L],
+      [-3.4, L],
+    ]);
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.028)';
+    ctx.fill();
+
     for (const [px, pz, pr] of [[-2.6, 7.5, 5.2], [2.6, 7.5, 5.2], [-2.6, 14, 5.6], [2.6, 14, 5.6]] as const) {
       const c = this.project(px, 0, pz);
       const rr = pr * c.s;
       const pool = ctx.createRadialGradient(c.x, c.y, 0, c.x, c.y, rr);
-      pool.addColorStop(0, 'rgba(190, 225, 255, 0.10)');
-      pool.addColorStop(1, 'rgba(190, 225, 255, 0)');
+      pool.addColorStop(0, 'rgba(195, 228, 255, 0.17)');
+      pool.addColorStop(0.55, 'rgba(195, 228, 255, 0.06)');
+      pool.addColorStop(1, 'rgba(195, 228, 255, 0)');
       ctx.fillStyle = pool;
       ctx.beginPath();
       ctx.ellipse(c.x, c.y, rr, rr * 0.4, 0, 0, Math.PI * 2);
@@ -485,19 +549,47 @@ export class Renderer {
       ctx.fillStyle = 'rgba(255,255,255,0.035)';
       ctx.fill();
     }
-    // sombra de la red sobre el suelo
+    // sombra de la red sobre el suelo + oscurecido tras la red (separa planos)
     this.groundPoly([
       [-hw, COURT.netZ + 0.15],
       [hw, COURT.netZ + 0.15],
       [hw, COURT.netZ + 0.75],
       [-hw, COURT.netZ + 0.75],
     ]);
-    ctx.fillStyle = 'rgba(3, 12, 26, 0.16)';
+    ctx.fillStyle = 'rgba(3, 12, 26, 0.18)';
+    ctx.fill();
+    this.groundPoly([
+      [-hw, COURT.netZ - 1.4],
+      [hw, COURT.netZ - 1.4],
+      [hw, COURT.netZ],
+      [-hw, COURT.netZ],
+    ]);
+    ctx.fillStyle = 'rgba(4, 14, 30, 0.1)';
     ctx.fill();
 
-    // Paredes de cristal: más transparentes arriba, con marco
+    // Losa perimetral con grosor: cara lateral oscura + labio superior claro
+    const slab = (pts: Array<[number, number]>): void => {
+      // pts: [x,z] del borde; se extruye hacia abajo (y negativa)
+      ctx.beginPath();
+      const top = pts.map(([x, z]) => this.project(x, 0, z));
+      const bot = [...pts].reverse().map(([x, z]) => this.project(x, -0.32, z));
+      [...top, ...bot].forEach((q, i) => (i === 0 ? ctx.moveTo(q.x, q.y) : ctx.lineTo(q.x, q.y)));
+      ctx.closePath();
+      ctx.fillStyle = '#050e1c';
+      ctx.fill();
+      ctx.strokeStyle = 'rgba(150, 195, 240, 0.5)';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      top.forEach((q, i) => (i === 0 ? ctx.moveTo(q.x, q.y) : ctx.lineTo(q.x, q.y)));
+      ctx.stroke();
+    };
+    slab([[-9.5, L + 1], [9.5, L + 1]]); // frente de la plataforma
+    slab([[-9.5, 12], [-9.5, L + 1]]);
+    slab([[9.5, L + 1], [9.5, 12]]);
+
+    // Cristales como paredes: paneles individuales + zócalo + raíl superior
     const wh = COURT.wallHeight;
-    const wallQuad = (pts: Array<[number, number, number]>, sideWall: boolean): void => {
+    const quad3d = (pts: Array<[number, number, number]>): void => {
       ctx.beginPath();
       pts.forEach(([x, y, z], i) => {
         const p = this.project(x, y, z);
@@ -505,20 +597,68 @@ export class Renderer {
         else ctx.lineTo(p.x, p.y);
       });
       ctx.closePath();
-      const top = this.project(pts[2][0], wh, pts[2][2]).y;
-      const bot = this.project(pts[0][0], 0, pts[0][2]).y;
-      const gg = ctx.createLinearGradient(0, top, 0, bot);
-      gg.addColorStop(0, 'rgba(160, 205, 245, 0.035)');
-      gg.addColorStop(1, sideWall ? 'rgba(160, 205, 245, 0.10)' : 'rgba(160, 205, 245, 0.13)');
-      ctx.fillStyle = gg;
+    };
+    // Un panel de cristal con reflejo diagonal propio (varía por índice)
+    const glassPanel = (
+      a: [number, number], b: [number, number], idx: number, backWall: boolean,
+    ): void => {
+      quad3d([[a[0], 0.28, a[1]], [b[0], 0.28, b[1]], [b[0], wh, b[1]], [a[0], wh, a[1]]]);
+      const baseA = backWall ? 0.12 : 0.08;
+      ctx.fillStyle = `rgba(155, 205, 250, ${(baseA + seed01(idx * 17) * 0.05).toFixed(3)})`;
       ctx.fill();
-      ctx.strokeStyle = 'rgba(190, 222, 250, 0.4)';
+      ctx.strokeStyle = 'rgba(190, 222, 250, 0.34)';
+      ctx.lineWidth = 1.2;
+      ctx.stroke();
+      // reflejo vertical suave en algunos paneles
+      if (seed01(idx * 53 + 7) > 0.4) {
+        const t0 = this.project((a[0] + b[0]) / 2, wh, (a[1] + b[1]) / 2);
+        const b0 = this.project(a[0] * 0.35 + b[0] * 0.65, 0.4, a[1] * 0.35 + b[1] * 0.65);
+        const gR = ctx.createLinearGradient(t0.x, t0.y, b0.x, b0.y);
+        gR.addColorStop(0, `rgba(255,255,255,${(0.05 + seed01(idx * 3) * 0.06).toFixed(3)})`);
+        gR.addColorStop(1, 'rgba(255,255,255,0)');
+        ctx.strokeStyle = gR;
+        ctx.lineWidth = Math.max(t0.s * 0.35, 4);
+        ctx.beginPath();
+        ctx.moveTo(t0.x, t0.y);
+        ctx.lineTo(b0.x, b0.y);
+        ctx.stroke();
+      }
+    };
+    // Zócalo oscuro donde el cristal toca el suelo
+    const plinth = (a: [number, number], b: [number, number]): void => {
+      quad3d([[a[0], 0, a[1]], [b[0], 0, b[1]], [b[0], 0.28, b[1]], [a[0], 0.28, a[1]]]);
+      ctx.fillStyle = 'rgba(6, 15, 28, 0.72)';
+      ctx.fill();
+    };
+    // Raíl superior con grosor: cara clara + canto oscuro
+    const rail = (a: [number, number], b: [number, number]): void => {
+      quad3d([[a[0], wh, a[1]], [b[0], wh, b[1]], [b[0], wh + 0.14, b[1]], [a[0], wh + 0.14, a[1]]]);
+      ctx.fillStyle = 'rgba(175, 205, 235, 0.55)';
+      ctx.fill();
+      const pa = this.project(a[0], wh, a[1]);
+      const pb = this.project(b[0], wh, b[1]);
+      ctx.strokeStyle = 'rgba(20, 40, 65, 0.6)';
       ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.moveTo(pa.x, pa.y);
+      ctx.lineTo(pb.x, pb.y);
       ctx.stroke();
     };
-    wallQuad([[-hw, 0, 0], [hw, 0, 0], [hw, wh, 0], [-hw, wh, 0]], false);
-    wallQuad([[-hw, 0, 0], [-hw, 0, L], [-hw, wh, L], [-hw, wh, 0]], true);
-    wallQuad([[hw, 0, 0], [hw, 0, L], [hw, wh, L], [hw, wh, 0]], true);
+
+    // Pared de fondo: 5 paneles de 2 m
+    plinth([-hw, 0], [hw, 0]);
+    for (let i = 0; i < 5; i++) {
+      glassPanel([-hw + i * 2, 0], [-hw + (i + 1) * 2, 0], i, true);
+    }
+    rail([-hw, 0], [hw, 0]);
+    // Paredes laterales: 5 paneles de 4 m cada una
+    for (const side of [-1, 1] as const) {
+      plinth([side * hw, 0], [side * hw, L]);
+      for (let i = 0; i < 5; i++) {
+        glassPanel([side * hw, i * 4], [side * hw, (i + 1) * 4], i + 10 * side + 20, false);
+      }
+      rail([side * hw, 0], [side * hw, L]);
+    }
 
     // Perfiles metálicos con remate superior brillante
     ctx.strokeStyle = 'rgba(205, 228, 250, 0.34)';
@@ -661,16 +801,30 @@ export class Renderer {
       ctx.stroke();
     }
 
-    // Banda superior con brillo y cinta central
-    const gBand = ctx.createLinearGradient(at.x, at.y - 3, at.x, at.y + 3);
+    // Banda superior con volumen (cara blanca + canto en sombra)
+    const bandTopL = this.project(-hw, nh + 0.045, nz);
+    const bandTopR = this.project(hw, nh + 0.045, nz);
+    const bandBotL = this.project(-hw, nh - 0.075, nz);
+    const bandBotR = this.project(hw, nh - 0.075, nz);
+    const gBand = ctx.createLinearGradient(0, bandTopL.y, 0, bandBotL.y);
     gBand.addColorStop(0, '#ffffff');
-    gBand.addColorStop(1, '#c7d4e2');
-    ctx.strokeStyle = gBand;
-    ctx.lineWidth = 3.5;
+    gBand.addColorStop(0.65, '#e4ebf3');
+    gBand.addColorStop(1, '#a9b8c8');
+    ctx.fillStyle = gBand;
     ctx.beginPath();
-    ctx.moveTo(at.x, at.y);
-    ctx.lineTo(bt.x, bt.y);
+    ctx.moveTo(bandTopL.x, bandTopL.y);
+    ctx.lineTo(bandTopR.x, bandTopR.y);
+    ctx.lineTo(bandBotR.x, bandBotR.y);
+    ctx.lineTo(bandBotL.x, bandBotL.y);
+    ctx.closePath();
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(30, 48, 70, 0.5)';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(bandBotL.x, bandBotL.y);
+    ctx.lineTo(bandBotR.x, bandBotR.y);
     ctx.stroke();
+    // Cinta central
     const cTop = this.project(0, nh, nz);
     const cBot = this.project(0, 0, nz);
     ctx.strokeStyle = 'rgba(244, 247, 251, 0.8)';
@@ -680,16 +834,30 @@ export class Renderer {
     ctx.lineTo(cBot.x, cBot.y);
     ctx.stroke();
 
-    // Postes
-    ctx.strokeStyle = '#dfe8f2';
-    ctx.lineWidth = 4;
+    // Postes con grosor, remate y sombra en la base
     for (const px of [-hw, hw]) {
       const base = this.project(px, 0, nz);
-      const top = this.project(px, nh + 0.1, nz);
+      const top = this.project(px, nh + 0.14, nz);
+      // sombra del poste
+      ctx.fillStyle = 'rgba(2, 8, 18, 0.35)';
+      ctx.beginPath();
+      ctx.ellipse(base.x + base.s * 0.06, base.y, base.s * 0.14, base.s * 0.05, 0, 0, Math.PI * 2);
+      ctx.fill();
+      const gP = ctx.createLinearGradient(base.x - 4, 0, base.x + 4, 0);
+      gP.addColorStop(0, '#b9c6d4');
+      gP.addColorStop(0.4, '#eef3f8');
+      gP.addColorStop(1, '#8c9aa9');
+      ctx.strokeStyle = gP;
+      ctx.lineWidth = Math.max(base.s * 0.075, 4);
+      ctx.lineCap = 'round';
       ctx.beginPath();
       ctx.moveTo(base.x, base.y);
       ctx.lineTo(top.x, top.y);
       ctx.stroke();
+      ctx.fillStyle = '#f4f8fc';
+      ctx.beginPath();
+      ctx.arc(top.x, top.y, Math.max(base.s * 0.045, 2.5), 0, Math.PI * 2);
+      ctx.fill();
     }
   }
 
@@ -736,6 +904,17 @@ export class Renderer {
         ctx.lineTo(b.x, b.y);
         ctx.stroke();
       }
+    }
+
+    // Reflejo tenue en el cristal del fondo cuando la bola pasa cerca
+    if (pos.z < 3.2 && pos.y < 3.6) {
+      const k = 1 - pos.z / 3.2;
+      const rp = this.project(pos.x, pos.y, -pos.z * 0.8);
+      const rr = Math.max(BALL_RADIUS * rp.s * 1.4, 2);
+      ctx.fillStyle = `rgba(220, 228, 90, ${(0.14 * k).toFixed(3)})`;
+      ctx.beginPath();
+      ctx.arc(rp.x, rp.y, rr, 0, Math.PI * 2);
+      ctx.fill();
     }
 
     // Sombra dinámica (más nítida cuanto más baja va la bola)
@@ -821,7 +1000,7 @@ export class Renderer {
   private drawAvatar(p: PlayerEntity, pal: Palette, facingCamera: boolean): void {
     const ctx = this.ctx;
     const base = this.project(p.x, 0, p.z);
-    const s = base.s * 1.18; // presencia: más grandes que el mundo
+    const s = base.s * (facingCamera ? 1.5 : 1.22); // presencia (el lejano, aún más)
     const cx = base.x;
 
     // Sombra suave
@@ -851,16 +1030,26 @@ export class Renderer {
 
     const stride = Math.sin(p.runPhase) * 0.2 * s * p.moveAmount;
     const kneeLift = Math.abs(Math.sin(p.runPhase)) * 0.08 * s * p.moveAmount;
+    // Pierna de apoyo marcada durante el golpe: la base se abre
+    const spread = p.swingType !== null ? 0.09 * s * (1 - Math.min(p.swingT, 1)) : 0;
 
     ctx.lineCap = 'round';
 
-    // ---- Piernas: muslo + gemelo con calcetín y zapatilla ----
+    // ---- Piernas: muslo + gemelo con contorno, calcetín y zapatilla ----
     const drawLeg = (side: -1 | 1, offset: number): void => {
       const hx = cx + side * 0.1 * s;
-      const fx = cx + side * 0.17 * s + offset;
+      const fx = cx + side * 0.17 * s + offset + side * spread;
       const fy = base.y - Math.abs(offset) * 0.25;
       const kx = (hx + fx) / 2 + side * 0.045 * s;
       const ky = (hipY + fy) / 2 + kneeLift - 0.02 * s;
+      // contorno oscuro fino (separa del suelo)
+      ctx.strokeStyle = 'rgba(9, 18, 30, 0.65)';
+      ctx.lineWidth = Math.max(0.155 * s, 4);
+      ctx.beginPath();
+      ctx.moveTo(hx, hipY + 0.08 * s);
+      ctx.lineTo(kx, ky);
+      ctx.lineTo(fx, fy - 0.1 * s);
+      ctx.stroke();
       // muslo (más grueso)
       ctx.strokeStyle = pal.skin;
       ctx.lineWidth = Math.max(0.125 * s, 3);
@@ -970,6 +1159,11 @@ export class Renderer {
     ctx.beginPath();
     ctx.arc(0, headY, headR, 0, Math.PI * 2);
     ctx.fill();
+    ctx.strokeStyle = 'rgba(9, 18, 30, 0.5)';
+    ctx.lineWidth = Math.max(headR * 0.13, 1);
+    ctx.beginPath();
+    ctx.arc(0, headY, headR, 0, Math.PI * 2);
+    ctx.stroke();
     ctx.fillStyle = pal.hair;
     ctx.beginPath();
     if (facingCamera) {
@@ -1054,11 +1248,24 @@ export class Renderer {
       }
     }
 
-    ctx.strokeStyle = pal.skin;
-    ctx.lineWidth = Math.max(0.085 * s, 2.2);
+    // contorno del brazo
+    ctx.strokeStyle = 'rgba(9, 18, 30, 0.6)';
+    ctx.lineWidth = Math.max(0.12 * s, 3.2);
     ctx.beginPath();
     ctx.moveTo(shoulder.x, shoulder.y);
     ctx.quadraticCurveTo(elbow.x, elbow.y, hand.x, hand.y);
+    ctx.stroke();
+    // brazo (más grueso) y antebrazo (más fino)
+    ctx.strokeStyle = pal.skin;
+    ctx.lineWidth = Math.max(0.098 * s, 2.6);
+    ctx.beginPath();
+    ctx.moveTo(shoulder.x, shoulder.y);
+    ctx.lineTo(elbow.x, elbow.y);
+    ctx.stroke();
+    ctx.lineWidth = Math.max(0.075 * s, 2);
+    ctx.beginPath();
+    ctx.moveTo(elbow.x, elbow.y);
+    ctx.lineTo(hand.x, hand.y);
     ctx.stroke();
     // muñequera
     ctx.strokeStyle = '#f4f7fb';
@@ -1104,6 +1311,17 @@ export class Renderer {
         ctx.arc(rackCx + ox * s, rackCy + oy * s, 0.013 * s, 0, Math.PI * 2);
         ctx.fill();
       }
+    }
+    // flash de contacto: destello blanco en los primeros frames del golpe
+    if (swinging && p.swingT < 0.2) {
+      const fa = (0.2 - p.swingT) * 3.2;
+      const fl = ctx.createRadialGradient(rackCx, rackCy, 0, rackCx, rackCy, 0.42 * s);
+      fl.addColorStop(0, `rgba(255, 255, 255, ${Math.min(fa, 0.75).toFixed(3)})`);
+      fl.addColorStop(1, 'rgba(255, 255, 255, 0)');
+      ctx.fillStyle = fl;
+      ctx.beginPath();
+      ctx.arc(rackCx, rackCy, 0.42 * s, 0, Math.PI * 2);
+      ctx.fill();
     }
     // brillo del golpe en la pala
     if (swinging && p.swingT < 0.5) {
