@@ -19,6 +19,9 @@ import { sfx } from './audio/sfx';
 import { OnlineSession, RemoteControl } from './net/online';
 import { GuestMatchView } from './net/guest';
 import { CPU_PALETTE } from './game/render';
+import { CameraTrainingView } from './training/view';
+import type { TrainingSummary } from './training/session';
+import type { DrillType, ShotType } from './types';
 import { SHOT_NAMES } from './types';
 import { PoseTracker } from './camera/pose';
 import { CameraControl } from './camera/gestures';
@@ -28,6 +31,7 @@ import { KeyboardTouchControl, SplitKeyboardControl } from './ui/input';
 import type { ControlAdapter } from './ui/input';
 
 const canvas = document.querySelector<HTMLCanvasElement>('#game')!;
+const trainCanvas = document.querySelector<HTMLCanvasElement>('#trainCanvas')!;
 const video = document.querySelector<HTMLVideoElement>('#cam')!;
 const preview = document.querySelector<HTMLCanvasElement>('#camPreview')!;
 
@@ -35,6 +39,7 @@ const renderer = new Renderer(canvas);
 ui.init();
 
 let currentMode: MatchMode | PracticeMode | null = null;
+let currentTraining: CameraTrainingView | null = null;
 let currentControl: ControlAdapter | null = null;
 let currentOnline: OnlineSession | null = null;
 let currentGuest: GuestMatchView | null = null;
@@ -63,6 +68,8 @@ let tourneyRound = -1; // -1 = sin torneo en curso
 function backToMenu(): void {
   currentMode?.stop();
   currentMode = null;
+  currentTraining?.stop();
+  currentTraining = null;
   currentGuest?.stop();
   currentGuest = null;
   currentOnline?.destroy();
@@ -416,6 +423,71 @@ function startGuestView(session: OnlineSession): void {
   guest.start();
 }
 
+// ---- Entrenamiento técnico con cámara ----
+
+function drillToShot(d: DrillType): ShotType {
+  if (d === 'mixto') return 'forehand';
+  if (d === 'volley') return 'volleyFh';
+  return d;
+}
+
+async function startTraining(): Promise<void> {
+  stopIdle();
+  ui.show('calib');
+  ui.setCalibStatus('Iniciando cámara y análisis de pose…', 'wait');
+  if (!tracker) tracker = new PoseTracker(video);
+  if (!tracker.running) {
+    try {
+      await tracker.start();
+    } catch {
+      ui.setCalibStatus(`${tracker.error ?? 'Error de cámara'} — vuelve al menú.`, 'err');
+      await new Promise<void>((res) => {
+        ui.onCalibCancel = () => res();
+      });
+      ui.onCalibCancel = null;
+      backToMenu();
+      return;
+    }
+  }
+  ui.show('none');
+  const shot = drillToShot(ui.settings.drill);
+
+  const view = new CameraTrainingView({
+    canvas: trainCanvas,
+    tracker,
+    shot,
+    onFinish: (summary: TrainingSummary) => {
+      currentTraining = null;
+      const timingTxt =
+        summary.meanDtMs === null ? '—' : `${summary.meanDtMs > 0 ? '+' : ''}${summary.meanDtMs} ms`;
+      saveSession({
+        date: Date.now(),
+        mode: 'practice',
+        title: `Técnica · ${SHOT_NAMES[shot]}`,
+        stats: [
+          { lbl: 'Consistencia', val: `${summary.consistency}%` },
+          { lbl: 'Correctos', val: `${summary.correct} / ${summary.reps.length}` },
+          { lbl: 'Timing medio', val: timingTxt },
+          { lbl: 'Mejor racha', val: `${summary.bestStreak}` },
+        ],
+        tips: [
+          ...(summary.mainIssue
+            ? [{ id: summary.mainIssue.tipId, warn: true, text: summary.mainIssue.text }]
+            : []),
+          { warn: false, text: summary.recommendation },
+        ],
+      });
+      ui.showTrainingSummary(summary);
+    },
+    onQuit: () => {
+      currentTraining = null;
+      backToMenu();
+    },
+  });
+  currentTraining = view;
+  view.start();
+}
+
 function showProgress(): void {
   const sessions = loadSessions();
   ui.showProgress(sessions, pendingCorrections(sessions), loadTrophies());
@@ -445,6 +517,8 @@ ui.onTourneyQuit = backToMenu;
 ui.onOnlineHost = () => void hostOnline();
 ui.onOnlineJoin = (code) => void joinOnline(code);
 ui.onOnlineBack = backToMenu;
+ui.onStartTraining = () => void startTraining();
+ui.onTrainAgain = () => void startTraining();
 ui.onCoachTrain = () => {
   if (!lastSuggestion) return;
   ui.selectDrill(lastSuggestion.drill);

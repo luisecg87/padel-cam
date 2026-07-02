@@ -15,10 +15,11 @@ interface WristSample {
 
 // Umbrales relativos al ancho de hombros ("anchos de cuerpo por segundo"):
 // así la sensibilidad es la misma estés cerca o lejos de la cámara.
-const SWING_SPEED_BW = 6.5; // velocidad mínima de la muñeca
-const SWING_MIN_DIST_BW = 0.55; // recorrido mínimo (evita disparos por ruido)
-const SWING_COOLDOWN = 0.5; // s entre golpes
-const HISTORY_MS = 170;
+// Exportados para que el modo entrenamiento use exactamente la misma detección.
+export const SWING_SPEED_BW = 6.5; // velocidad mínima de la muñeca
+export const SWING_MIN_DIST_BW = 0.55; // recorrido mínimo (evita disparos por ruido)
+export const SWING_COOLDOWN = 0.5; // s entre golpes
+export const HISTORY_MS = 170;
 const LATERAL_RANGE_BW = 3.0; // anchos de cuerpo que cubren media pista
 
 /**

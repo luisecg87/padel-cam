@@ -9,8 +9,24 @@
 </head>
 <body>
   <canvas id="game"></canvas>
+  <canvas id="trainCanvas"></canvas>
   <video id="cam" playsinline muted autoplay></video>
   <canvas id="camPreview" width="180" height="135"></canvas>
+
+  <!-- HUD del entrenamiento técnico (sobre la cámara) -->
+  <div id="trainHud">
+    <div class="train-top">
+      <div class="train-chip"><span class="lbl">GOLPE</span><span id="trainShot">—</span></div>
+      <div class="train-chip"><span class="lbl">REP</span><span id="trainRep">1 / 10</span></div>
+      <div class="train-chip accent"><span class="lbl">CONSISTENCIA</span><span id="trainScore">—</span></div>
+      <div class="train-chip"><span class="lbl">RACHA</span><span id="trainStreak">0</span></div>
+    </div>
+    <div id="trainPhase" class="train-phase"></div>
+    <div id="trainFeedback" class="train-feedback"></div>
+    <div id="trainCue" class="train-cue"></div>
+    <div id="trainPower"><div id="trainPowerFill"></div><span class="lbl">POTENCIA</span></div>
+    <button id="btnTrainQuit" title="Terminar sesión">✕</button>
+  </div>
 
   <div id="ui">
     <!-- Menú principal -->
@@ -43,7 +59,7 @@
       </div>
 
       <div class="menu-group">
-        <label>Modo práctica: golpe a entrenar</label>
+        <label>Golpe a entrenar</label>
         <div class="btn-row" id="drillRow">
           <button class="opt selected" data-drill="mixto">Mixto</button>
           <button class="opt" data-drill="forehand">Derecha</button>
@@ -56,10 +72,11 @@
       </div>
 
       <div class="main-buttons">
-        <button class="big" id="btnMatch">🎾 Partido vs CPU</button>
-        <button class="big gold" id="btnTournament">🏟️ Torneo</button>
-        <button class="big" id="btnOnline">🌐 Online 1 vs 1</button>
-        <button class="big" id="btnPractice">🎯 Modo Práctica</button>
+        <button class="big" id="btnTraining">🎥 Entrenamiento técnico</button>
+        <button class="big secondary" id="btnPractice">🎯 Práctica con bola virtual</button>
+        <button class="big secondary" id="btnMatch">🎾 Partido vs CPU</button>
+        <button class="big secondary" id="btnTournament">🏟️ Torneo</button>
+        <button class="big secondary" id="btnOnline">🌐 Online 1 vs 1</button>
         <button class="big secondary" id="btnProgress">📈 Mi progreso</button>
       </div>
 
@@ -104,6 +121,34 @@
         <button class="big" id="btnAgain">Jugar otra vez</button>
         <button class="link" id="btnReportProgress">Ver mi progreso</button>
         <button class="link" id="btnReportMenu">Volver al menú</button>
+      </div>
+    </div>
+
+    <!-- Resumen de sesión de entrenamiento técnico -->
+    <div class="screen" id="trainSummary">
+      <p class="ts-kicker" id="tsShot">SESIÓN · DERECHA</p>
+      <h2 class="ts-title">Resumen de la sesión</h2>
+
+      <div class="ts-hero">
+        <div class="ts-gauge" id="tsGauge"><div class="ts-gauge-inner"><span id="tsGaugeVal">0%</span><span class="lbl">consistencia</span></div></div>
+        <div class="ts-stats">
+          <div class="ts-stat"><span class="val" id="tsReps">0</span><span class="lbl">golpes</span></div>
+          <div class="ts-stat"><span class="val" id="tsCorrect">0</span><span class="lbl">correctos</span></div>
+          <div class="ts-stat"><span class="val" id="tsTiming">—</span><span class="lbl">timing medio</span></div>
+          <div class="ts-stat"><span class="val" id="tsStreak">0</span><span class="lbl">mejor racha</span></div>
+        </div>
+      </div>
+
+      <div class="ts-chart-card">
+        <div class="ts-chart-head">Timing por repetición <span class="ts-chart-hint">↑ tarde · ↓ pronto · banda = ventana ideal (±150 ms)</span></div>
+        <canvas id="tsChart" height="120"></canvas>
+      </div>
+
+      <div id="tsInsights" class="ts-insights"></div>
+
+      <div class="main-buttons">
+        <button class="big" id="btnTrainAgain">Repetir sesión</button>
+        <button class="link" id="btnTrainMenu">Volver al menú</button>
       </div>
     </div>
 

@@ -2,6 +2,8 @@ import { sfx } from '../audio/sfx';
 import { RIVALS, ROUND_NAMES, TOURNEY_GAMES } from '../modes/tournament';
 import type { Report } from '../analysis/coach';
 import type { Correction, DrillSuggestion, ProgressSummary, SavedSession } from '../analysis/progress';
+import type { TrainingSummary } from '../training/session';
+import { SHOT_NAMES } from '../types';
 import type { ControlMode, Difficulty, DrillType } from '../types';
 
 export interface MenuSettings {
@@ -10,7 +12,15 @@ export interface MenuSettings {
   drill: DrillType;
 }
 
-type ScreenId = 'menu' | 'calib' | 'report' | 'progress' | 'tourney' | 'online' | 'none';
+type ScreenId =
+  | 'menu'
+  | 'calib'
+  | 'report'
+  | 'progress'
+  | 'tourney'
+  | 'online'
+  | 'trainSummary'
+  | 'none';
 
 export type TourneyPhase = 'play' | 'lost' | 'champion';
 
@@ -39,6 +49,8 @@ class UI {
   onOnlineHost: (() => void) | null = null;
   onOnlineJoin: ((code: string) => void) | null = null;
   onOnlineBack: (() => void) | null = null;
+  onStartTraining: (() => void) | null = null;
+  onTrainAgain: (() => void) | null = null;
 
   private toastTimer: number | null = null;
   private tourneyPhase: TourneyPhase = 'play';
@@ -77,6 +89,9 @@ class UI {
       else this.setOnlineStatus('Escribe el código de 4 letras de la partida', 'err');
     });
     $('#btnOnlineBack').addEventListener('click', () => this.onOnlineBack?.());
+    $('#btnTraining').addEventListener('click', () => this.onStartTraining?.());
+    $('#btnTrainAgain').addEventListener('click', () => this.onTrainAgain?.());
+    $('#btnTrainMenu').addEventListener('click', () => this.show('menu'));
 
     // Sonido: desbloquear el AudioContext con el primer gesto y clicks de UI
     const btnSound = $('#btnSound') as HTMLButtonElement;
@@ -257,6 +272,115 @@ class UI {
       ? '💾 Informe guardado: revisa tus correcciones en «Mi progreso»'
       : '';
     this.show('report');
+  }
+
+  /** TrainingSessionSummary: resumen visual de la sesión de técnica. */
+  showTrainingSummary(s: TrainingSummary): void {
+    $('#tsShot').textContent = `SESIÓN · ${SHOT_NAMES[s.shot].toUpperCase()}`;
+    $('#tsReps').textContent = `${s.reps.length}`;
+    $('#tsCorrect').textContent = `${s.correct}`;
+    $('#tsStreak').textContent = `${s.bestStreak}`;
+    $('#tsTiming').textContent =
+      s.meanDtMs === null ? '—' : `${s.meanDtMs > 0 ? '+' : ''}${s.meanDtMs} ms`;
+
+    // Gauge de consistencia (anillo conic-gradient, color por estado)
+    const pct = s.consistency;
+    const col = pct >= 75 ? 'var(--tr-good)' : pct >= 50 ? 'var(--tr-warn)' : 'var(--tr-bad)';
+    const gauge = $('#tsGauge');
+    gauge.style.background = `conic-gradient(${col} ${pct * 3.6}deg, rgba(255,255,255,.09) 0deg)`;
+    const gv = $('#tsGaugeVal');
+    gv.textContent = `${pct}%`;
+    gv.style.color = col;
+
+    this.drawTimingChart($('#tsChart') as HTMLCanvasElement, s);
+
+    // TrainingInsightCard: error principal + recomendación
+    const cards: string[] = [];
+    if (s.mainIssue) {
+      cards.push(
+        `<div class="ts-insight warn"><b>A CORREGIR</b>${s.mainIssue.text}</div>`,
+      );
+    }
+    cards.push(`<div class="ts-insight"><b>PRÓXIMA SESIÓN</b>${s.recommendation}</div>`);
+    $('#tsInsights').innerHTML = cards.join('');
+
+    this.show('trainSummary');
+  }
+
+  /**
+   * Timing por repetición: barra con signo (arriba = tarde, abajo = pronto),
+   * banda de ±150 ms como ventana ideal y color de estado por repetición.
+   * El estado nunca va solo en el color: lo lleva también la altura/side.
+   */
+  private drawTimingChart(canvas: HTMLCanvasElement, s: TrainingSummary): void {
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    const W = canvas.clientWidth || 500;
+    const H = 120;
+    canvas.width = W * dpr;
+    canvas.height = H * dpr;
+    const ctx = canvas.getContext('2d')!;
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, W, H);
+
+    const padL = 8;
+    const padR = 8;
+    const midY = H / 2;
+    const maxMs = 600; // escala fija: ±600 ms
+    const yOf = (ms: number): number => midY - (Math.max(-maxMs, Math.min(maxMs, ms)) / maxMs) * (H / 2 - 12);
+
+    // Banda de ventana ideal ±150 ms
+    ctx.fillStyle = 'rgba(255,255,255,0.06)';
+    ctx.fillRect(padL, yOf(150), W - padL - padR, yOf(-150) - yOf(150));
+    // Línea base 0
+    ctx.strokeStyle = 'rgba(255,255,255,0.35)';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(padL, midY);
+    ctx.lineTo(W - padR, midY);
+    ctx.stroke();
+
+    const n = s.reps.length;
+    if (n === 0) return;
+    const slot = (W - padL - padR) / n;
+    const barW = Math.max(Math.min(slot - 4, 26), 6);
+
+    let maxAbs = 0;
+    let maxIdx = -1;
+    s.reps.forEach((r, i) => {
+      if (r.dtMs !== null && Math.abs(r.dtMs) > maxAbs) {
+        maxAbs = Math.abs(r.dtMs);
+        maxIdx = i;
+      }
+    });
+
+    s.reps.forEach((r, i) => {
+      const cx = padL + slot * i + slot / 2;
+      if (r.dtMs === null) {
+        // Sin golpe: hueco marcado en la base, sin barra
+        ctx.strokeStyle = 'rgba(255,255,255,0.3)';
+        ctx.setLineDash([3, 3]);
+        ctx.strokeRect(cx - barW / 2, midY - 4, barW, 8);
+        ctx.setLineDash([]);
+        return;
+      }
+      const abs = Math.abs(r.dtMs);
+      const color = abs <= 150 ? '#34d399' : abs <= 350 ? '#fbbf24' : '#f87171';
+      const y = yOf(r.dtMs);
+      const top = Math.min(y, midY);
+      const h = Math.max(Math.abs(y - midY), 3);
+      ctx.fillStyle = color;
+      ctx.beginPath();
+      ctx.roundRect(cx - barW / 2, top, barW, h, 3);
+      ctx.fill();
+      // Etiqueta directa solo en la peor desviación (selectiva)
+      if (i === maxIdx && abs > 150) {
+        ctx.fillStyle = 'rgba(255,255,255,0.75)';
+        ctx.font = '10px "Segoe UI", sans-serif';
+        ctx.textAlign = 'center';
+        const ly = r.dtMs > 0 ? top - 4 : top + h + 11;
+        ctx.fillText(`${r.dtMs > 0 ? '+' : ''}${r.dtMs} ms`, cx, ly);
+      }
+    });
   }
 
   showProgress(sessions: SavedSession[], corrections: Correction[], trophies = 0): void {
