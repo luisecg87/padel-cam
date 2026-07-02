@@ -1,4 +1,6 @@
 node_modules/
 dist/
+# Temporal: el token de gh aún no tiene scope "workflow"; quitar cuando se autorice
+.github/
 .DS_Store
 *.local
