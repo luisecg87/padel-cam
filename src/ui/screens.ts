@@ -10,7 +10,7 @@ export interface MenuSettings {
   drill: DrillType;
 }
 
-type ScreenId = 'menu' | 'calib' | 'report' | 'progress' | 'tourney' | 'none';
+type ScreenId = 'menu' | 'calib' | 'report' | 'progress' | 'tourney' | 'online' | 'none';
 
 export type TourneyPhase = 'play' | 'lost' | 'champion';
 
@@ -36,6 +36,9 @@ class UI {
   onStartTournament: (() => void) | null = null;
   onTourneyGo: (() => void) | null = null;
   onTourneyQuit: (() => void) | null = null;
+  onOnlineHost: (() => void) | null = null;
+  onOnlineJoin: ((code: string) => void) | null = null;
+  onOnlineBack: (() => void) | null = null;
 
   private toastTimer: number | null = null;
   private tourneyPhase: TourneyPhase = 'play';
@@ -63,6 +66,17 @@ class UI {
       else this.onTourneyQuit?.();
     });
     $('#btnTourneyQuit').addEventListener('click', () => this.onTourneyQuit?.());
+    $('#btnOnline').addEventListener('click', () => {
+      this.setOnlineStatus('Elige una opción', 'wait');
+      this.show('online');
+    });
+    $('#btnOnlineHost').addEventListener('click', () => this.onOnlineHost?.());
+    $('#btnOnlineJoin').addEventListener('click', () => {
+      const code = ($('#onlineCode') as HTMLInputElement).value;
+      if (code.trim().length >= 4) this.onOnlineJoin?.(code);
+      else this.setOnlineStatus('Escribe el código de 4 letras de la partida', 'err');
+    });
+    $('#btnOnlineBack').addEventListener('click', () => this.onOnlineBack?.());
 
     // Sonido: desbloquear el AudioContext con el primer gesto y clicks de UI
     const btnSound = $('#btnSound') as HTMLButtonElement;
@@ -168,6 +182,13 @@ class UI {
 
   setReplay(v: boolean): void {
     $('#replayBadge').classList.toggle('show', v);
+  }
+
+  setOnlineStatus(text: string, state: 'wait' | 'ok' | 'err'): void {
+    const el = $('#onlineStatus');
+    el.textContent = text;
+    el.classList.toggle('ok', state === 'ok');
+    el.classList.toggle('err', state === 'err');
   }
 
   /** Pantalla del torneo: presentación de ronda, eliminación o título de campeón. */

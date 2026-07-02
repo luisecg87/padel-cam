@@ -60,6 +60,14 @@ export class Renderer {
   private crowdExcite = 0;
   /** Camiseta del rival: los rivales del torneo tienen su propio color. */
   cpuPalette: Palette = CPU_PALETTE;
+  // Cielo estrellado fijo (posiciones relativas a la pantalla)
+  private stars = Array.from({ length: 70 }, () => ({
+    x: Math.random(),
+    y: Math.random() * 0.22,
+    r: 0.4 + Math.random() * 1.1,
+    a: 0.25 + Math.random() * 0.55,
+  }));
+  private vignette: CanvasGradient | null = null;
 
   constructor(canvas: HTMLCanvasElement) {
     this.canvas = canvas;
@@ -77,6 +85,14 @@ export class Renderer {
     this.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     this.f = Math.min(this.H * 0.95, this.W * 0.57);
     this.horizonY = this.H * 0.3;
+    // Viñeta cacheada (oscurece esquinas: foco en la pista)
+    const g = this.ctx.createRadialGradient(
+      this.W / 2, this.H * 0.55, Math.min(this.W, this.H) * 0.45,
+      this.W / 2, this.H * 0.55, Math.max(this.W, this.H) * 0.78,
+    );
+    g.addColorStop(0, 'rgba(2, 8, 18, 0)');
+    g.addColorStop(1, 'rgba(2, 8, 18, 0.5)');
+    this.vignette = g;
   }
 
   /** Proyección perspectiva simple de coordenadas de mundo a pantalla. */
@@ -133,7 +149,9 @@ export class Renderer {
 
     this.drawBackground();
     this.drawCrowd(dt);
+    this.drawFloodlights();
     this.drawCourt();
+    this.drawLedBoard();
     this.drawAvatar(cpu, this.cpuPalette, true);
     if (showBall && ball.pos.z <= COURT.netZ) this.drawBall(ball);
     this.drawNet();
@@ -141,6 +159,12 @@ export class Renderer {
     this.drawParticles(dt);
     this.drawAvatar(player, PLAYER_PALETTE, false);
     ctx.restore();
+
+    // Viñeta en espacio de pantalla (fuera del shake)
+    if (this.vignette) {
+      ctx.fillStyle = this.vignette;
+      ctx.fillRect(0, 0, this.W, this.H);
+    }
   }
 
   /** El público se pone en pie: 1 = ovación completa. Decae solo. */
@@ -208,11 +232,63 @@ export class Renderer {
   private drawBackground(): void {
     const ctx = this.ctx;
     const g = ctx.createLinearGradient(0, 0, 0, this.H);
-    g.addColorStop(0, '#0a1c30');
+    g.addColorStop(0, '#060f1e');
     g.addColorStop(0.35, '#14385e');
     g.addColorStop(1, '#0d2740');
     ctx.fillStyle = g;
     ctx.fillRect(0, 0, this.W, this.H);
+
+    // Noche estrellada sobre el estadio
+    for (const s of this.stars) {
+      ctx.fillStyle = `rgba(220, 235, 255, ${s.a})`;
+      ctx.beginPath();
+      ctx.arc(s.x * this.W, s.y * this.H, s.r, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+
+  /** Focos del estadio sobre las gradas, con halo. */
+  private drawFloodlights(): void {
+    const ctx = this.ctx;
+    for (const lx of [-7.2, -2.4, 2.4, 7.2]) {
+      const p = this.project(lx, 8.9, -5.8);
+      const r = 0.55 * p.s;
+      const g = ctx.createRadialGradient(p.x, p.y, r * 0.15, p.x, p.y, r * 3);
+      g.addColorStop(0, 'rgba(255, 250, 220, 0.95)');
+      g.addColorStop(0.25, 'rgba(255, 245, 200, 0.28)');
+      g.addColorStop(1, 'rgba(255, 245, 200, 0)');
+      ctx.fillStyle = g;
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, r * 3, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+
+  /** Valla LED publicitaria en lo alto del cristal de fondo, con texto en marquesina. */
+  private drawLedBoard(): void {
+    const ctx = this.ctx;
+    const hw = COURT.halfWidth;
+    const tl = this.project(-hw, 3.95, 0);
+    const br = this.project(hw, 3.5, 0);
+    const w = br.x - tl.x;
+    const h = br.y - tl.y;
+    if (w < 40) return;
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(tl.x, tl.y, w, h);
+    ctx.clip();
+    ctx.fillStyle = '#050d17';
+    ctx.fillRect(tl.x, tl.y, w, h);
+    ctx.fillStyle = '#ffd166';
+    ctx.font = `bold ${Math.max(h * 0.55, 7).toFixed(1)}px "Segoe UI", sans-serif`;
+    ctx.textBaseline = 'middle';
+    const msg = 'PÁDEL CAM  ●  JUEGA CON TU CUERPO  ●  ';
+    const mw = Math.max(ctx.measureText(msg).width, 40);
+    const off = -((performance.now() / 1000) * w * 0.06) % mw;
+    for (let x = tl.x + off - mw; x < br.x; x += mw) {
+      ctx.fillText(msg, x, tl.y + h * 0.55);
+    }
+    ctx.restore();
   }
 
   private groundPoly(points: Array<[number, number]>): void {
@@ -256,6 +332,19 @@ export class Renderer {
     ctx.fillStyle = gFloor;
     ctx.fill();
 
+    // Bandas de "cepillado" del césped artificial
+    for (let z = 0; z < L; z += 2.5) {
+      if ((z / 2.5) % 2 === 0) continue;
+      this.groundPoly([
+        [-hw, z],
+        [hw, z],
+        [hw, Math.min(z + 2.5, L)],
+        [-hw, Math.min(z + 2.5, L)],
+      ]);
+      ctx.fillStyle = 'rgba(255,255,255,0.04)';
+      ctx.fill();
+    }
+
     // Paredes de cristal (fondo y laterales), muy sutiles
     ctx.fillStyle = 'rgba(180, 220, 255, 0.10)';
     ctx.strokeStyle = 'rgba(200, 230, 255, 0.35)';
@@ -295,8 +384,44 @@ export class Renderer {
       [hw, wh, 0],
     ]);
 
-    // Líneas de la pista
-    ctx.strokeStyle = 'rgba(255,255,255,0.9)';
+    // Perfiles metálicos del cristal (estructura de la jaula)
+    ctx.strokeStyle = 'rgba(210, 230, 250, 0.28)';
+    ctx.lineWidth = 2;
+    const post = (x: number, z: number): void => {
+      const a = this.project(x, 0, z);
+      const b = this.project(x, wh, z);
+      ctx.beginPath();
+      ctx.moveTo(a.x, a.y);
+      ctx.lineTo(b.x, b.y);
+      ctx.stroke();
+    };
+    for (const x of [-hw, -hw / 2, 0, hw / 2, hw]) post(x, 0); // fondo
+    for (const z of [0, 4, 8, 12, 16, L]) {
+      post(-hw, z);
+      post(hw, z);
+    }
+
+    // Reflejo diagonal en el cristal de fondo
+    const rTop = this.project(-hw * 0.55, wh, 0);
+    const rBot = this.project(-hw * 0.15, 0.3, 0);
+    const gGlass = ctx.createLinearGradient(rTop.x, rTop.y, rBot.x, rBot.y);
+    gGlass.addColorStop(0, 'rgba(255,255,255,0.10)');
+    gGlass.addColorStop(1, 'rgba(255,255,255,0)');
+    ctx.strokeStyle = gGlass;
+    ctx.lineWidth = 10;
+    ctx.beginPath();
+    ctx.moveTo(rTop.x, rTop.y);
+    ctx.lineTo(rBot.x, rBot.y);
+    ctx.stroke();
+
+    // Líneas de la pista con halo (doble trazo)
+    ctx.strokeStyle = 'rgba(255,255,255,0.25)';
+    this.groundLine(-hw, 0.05, hw, 0.05, 6);
+    this.groundLine(-hw, L - 0.05, hw, L - 0.05, 6);
+    this.groundLine(-hw, COURT.serviceLineCpu, hw, COURT.serviceLineCpu, 5);
+    this.groundLine(-hw, COURT.serviceLinePlayer, hw, COURT.serviceLinePlayer, 5);
+    this.groundLine(0, COURT.serviceLineCpu, 0, COURT.serviceLinePlayer, 5);
+    ctx.strokeStyle = 'rgba(255,255,255,0.92)';
     this.groundLine(-hw, 0.05, hw, 0.05, 3); // fondo CPU
     this.groundLine(-hw, L - 0.05, hw, L - 0.05, 3); // fondo jugador
     this.groundLine(-hw, COURT.serviceLineCpu, hw, COURT.serviceLineCpu, 2);
@@ -323,6 +448,26 @@ export class Renderer {
     ctx.lineTo(at.x, at.y);
     ctx.closePath();
     ctx.fill();
+
+    // Retícula de la red
+    ctx.strokeStyle = 'rgba(220, 235, 250, 0.18)';
+    ctx.lineWidth = 1;
+    for (let x = -hw + 0.4; x < hw; x += 0.45) {
+      const v0 = this.project(x, 0, nz);
+      const v1 = this.project(x, nh, nz);
+      ctx.beginPath();
+      ctx.moveTo(v0.x, v0.y);
+      ctx.lineTo(v1.x, v1.y);
+      ctx.stroke();
+    }
+    for (const y of [0.3, 0.6]) {
+      const h0 = this.project(-hw, y, nz);
+      const h1 = this.project(hw, y, nz);
+      ctx.beginPath();
+      ctx.moveTo(h0.x, h0.y);
+      ctx.lineTo(h1.x, h1.y);
+      ctx.stroke();
+    }
 
     // Banda superior blanca
     ctx.strokeStyle = '#f4f7fb';
@@ -370,6 +515,16 @@ export class Renderer {
 
     const p = this.project(pos.x, pos.y, pos.z);
     const r = Math.max(BALL_RADIUS * p.s * 1.6, 3);
+
+    // Halo luminoso (la bola destaca bajo los focos)
+    const glow = ctx.createRadialGradient(p.x, p.y, r * 0.5, p.x, p.y, r * 2.6);
+    glow.addColorStop(0, 'rgba(230, 236, 60, 0.30)');
+    glow.addColorStop(1, 'rgba(230, 236, 60, 0)');
+    ctx.fillStyle = glow;
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, r * 2.6, 0, Math.PI * 2);
+    ctx.fill();
+
     const g = ctx.createRadialGradient(p.x - r * 0.3, p.y - r * 0.3, r * 0.2, p.x, p.y, r);
     g.addColorStop(0, '#fdfb8f');
     g.addColorStop(1, '#d9e021');

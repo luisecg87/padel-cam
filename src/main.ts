@@ -16,12 +16,15 @@ import {
 } from './analysis/progress';
 import { RIVALS, ROUND_NAMES, TOURNEY_GAMES } from './modes/tournament';
 import { sfx } from './audio/sfx';
+import { OnlineSession, RemoteControl } from './net/online';
+import { GuestMatchView } from './net/guest';
+import { CPU_PALETTE } from './game/render';
 import { SHOT_NAMES } from './types';
 import { PoseTracker } from './camera/pose';
 import { CameraControl } from './camera/gestures';
 import { runCalibration } from './camera/calibration';
 import { ui } from './ui/screens';
-import { KeyboardTouchControl } from './ui/input';
+import { KeyboardTouchControl, SplitKeyboardControl } from './ui/input';
 import type { ControlAdapter } from './ui/input';
 
 const canvas = document.querySelector<HTMLCanvasElement>('#game')!;
@@ -33,6 +36,8 @@ ui.init();
 
 let currentMode: MatchMode | PracticeMode | null = null;
 let currentControl: ControlAdapter | null = null;
+let currentOnline: OnlineSession | null = null;
+let currentGuest: GuestMatchView | null = null;
 let lastModeWasMatch = true;
 let tracker: PoseTracker | null = null;
 
@@ -58,6 +63,10 @@ let tourneyRound = -1; // -1 = sin torneo en curso
 function backToMenu(): void {
   currentMode?.stop();
   currentMode = null;
+  currentGuest?.stop();
+  currentGuest = null;
+  currentOnline?.destroy();
+  currentOnline = null;
   currentControl?.destroy();
   currentControl = null;
   tourneyRound = -1;
@@ -227,6 +236,186 @@ function playTourneyRound(): void {
   match.start();
 }
 
+// ---- Online 1v1: el anfitrión simula, el invitado renderiza en espejo ----
+
+function onlineDropped(): void {
+  backToMenu();
+  ui.setOnlineStatus('❌ Se perdió la conexión con el rival', 'err');
+  ui.show('online');
+}
+
+async function hostOnline(): Promise<void> {
+  stopIdle();
+  const control = await buildControl();
+  ui.show('online');
+  startIdle();
+  if (!control) {
+    ui.setOnlineStatus('No se pudo iniciar el control', 'err');
+    return;
+  }
+  currentControl = control;
+  ui.setCamPreviewVisible(false);
+  ui.setOnlineStatus('Creando sala…', 'wait');
+  currentOnline?.destroy();
+  const session = OnlineSession.host(
+    (code) => ui.setOnlineStatus(`Código: ${code} — compártelo con tu rival y no cierres esta pantalla`, 'ok'),
+    () => startOnlineMatch(session),
+    (err) => ui.setOnlineStatus(err, 'err'),
+  );
+  currentOnline = session;
+}
+
+function startOnlineMatch(session: OnlineSession): void {
+  if (!currentControl) return;
+  stopIdle();
+  ui.show('none');
+  ui.setCamPreviewVisible(ui.settings.control === 'camera');
+  lastModeWasMatch = true;
+
+  const remote = new RemoteControl();
+  session.onMessage = (m) => {
+    if (m.t === 'in') remote.feed(m);
+  };
+  session.onClose = () => {
+    onlineDropped();
+  };
+
+  // Interceptar los toasts para retransmitirlos al invitado
+  let toastN = 0;
+  let lastToast = '';
+  const origToast = ui.toast.bind(ui);
+  ui.toast = (text: string, ms?: number) => {
+    toastN++;
+    lastToast = text;
+    origToast(text, ms);
+  };
+  const scoreGamesEl = document.querySelector('#scoreGames')!;
+  const scorePointsEl = document.querySelector('#scorePoints')!;
+  const serveInfoEl = document.querySelector('#serveInfo')!;
+
+  const match = new MatchMode({
+    renderer,
+    control: currentControl,
+    controlMode: ui.settings.control,
+    difficulty: 'medium',
+    targetGames: 3,
+    controlP2: remote,
+    p1Name: 'Anfitrión',
+    rival: { name: 'Invitado', tagline: '', palette: CPU_PALETTE, difficulty: 'medium' },
+    onFinish: (logger, score) => {
+      cleanup();
+      const p = score.games.player;
+      const c = score.games.cpu;
+      session.send({
+        t: 'end',
+        title: score.winner === 'cpu' ? `🏆 ¡Ganaste ${c}-${p}!` : `Perdiste ${c}-${p}… ¡la próxima cae!`,
+        games: `${c} - ${p}`,
+      });
+      window.setTimeout(() => session.destroy(), 400);
+      currentOnline = null;
+      const report = analyzeMatch(logger);
+      const saved = saveSession({
+        date: Date.now(),
+        mode: 'match',
+        title: `Online vs Invitado ${p}-${c}`,
+        stats: report.stats,
+        tips: report.tips,
+      });
+      ui.setCamPreviewVisible(false);
+      ui.showReport(
+        score.winner === 'player' ? `🏆 ¡Ganaste ${p}-${c}!` : `Perdiste ${p}-${c}… ¡la próxima cae!`,
+        report,
+        saved,
+      );
+    },
+    onQuit: () => {
+      cleanup();
+      backToMenu();
+    },
+  });
+
+  const broadcast = window.setInterval(() => {
+    if (!session.connected) return;
+    const st = match.netState();
+    session.send({
+      t: 'st',
+      b: st.b,
+      p: st.p,
+      c: st.c,
+      hud: {
+        games: scoreGamesEl.textContent ?? '',
+        points: scorePointsEl.textContent ?? '',
+        serve: serveInfoEl.textContent ?? '',
+        toast: lastToast,
+        toastN,
+        replay: st.replay,
+      },
+    });
+  }, 40);
+
+  function cleanup(): void {
+    window.clearInterval(broadcast);
+    ui.toast = origToast;
+  }
+
+  currentMode = match;
+  match.start();
+}
+
+async function joinOnline(code: string): Promise<void> {
+  stopIdle();
+  const control = await buildControl();
+  ui.show('online');
+  startIdle();
+  if (!control) {
+    ui.setOnlineStatus('No se pudo iniciar el control', 'err');
+    return;
+  }
+  currentControl = control;
+  ui.setCamPreviewVisible(false);
+  ui.setOnlineStatus(`Conectando a ${code.toUpperCase()}…`, 'wait');
+  currentOnline?.destroy();
+  const session = OnlineSession.join(
+    code,
+    () => startGuestView(session),
+    (err) => ui.setOnlineStatus(err, 'err'),
+  );
+  currentOnline = session;
+}
+
+function startGuestView(session: OnlineSession): void {
+  if (!currentControl) return;
+  stopIdle();
+  ui.show('none');
+  ui.setCamPreviewVisible(ui.settings.control === 'camera');
+
+  const guest = new GuestMatchView({
+    renderer,
+    control: currentControl,
+    session,
+    onEnd: (title, games) => {
+      session.destroy();
+      currentOnline = null;
+      currentGuest = null;
+      ui.setCamPreviewVisible(false);
+      ui.showReport(
+        title,
+        {
+          stats: [{ lbl: 'Resultado (tú - rival)', val: games }],
+          tips: [{
+            warn: false,
+            text: 'En esta versión el informe del entrenador lo recibe quien crea la partida. Juega un partido vs CPU o una práctica para recibir el tuyo.',
+          }],
+        },
+        false,
+      );
+    },
+    onDrop: onlineDropped,
+  });
+  currentGuest = guest;
+  guest.start();
+}
+
 function showProgress(): void {
   const sessions = loadSessions();
   ui.showProgress(sessions, pendingCorrections(sessions), loadTrophies());
@@ -253,6 +442,9 @@ ui.onMenuShown = refreshCoachCard;
 ui.onStartTournament = () => void startTournament();
 ui.onTourneyGo = playTourneyRound;
 ui.onTourneyQuit = backToMenu;
+ui.onOnlineHost = () => void hostOnline();
+ui.onOnlineJoin = (code) => void joinOnline(code);
+ui.onOnlineBack = backToMenu;
 ui.onCoachTrain = () => {
   if (!lastSuggestion) return;
   ui.selectDrill(lastSuggestion.drill);

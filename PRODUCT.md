@@ -94,6 +94,8 @@ Reglas de diseño del paywall:
   (contenido aspiracional: el "final boss" da razón para entrenar).
 - Repetición a cámara lenta y público que reacciona (momentos compartibles,
   base para el futuro "compartir clip").
+- Online 1v1 P2P con código de sala (el multijugador es el mayor motor de
+  boca a boca: cada partida invita a otra persona al producto).
 
 **Siguiente (pre-monetización):**
 - Gráficas de evolución por golpe (calidad media semana a semana).
@@ -105,7 +107,8 @@ Reglas de diseño del paywall:
 - Cuentas y sincronización multi-dispositivo (el localStorage pasa a backend).
 - Pasarela de pago (Stripe) y paywall según la tabla anterior.
 - Repetición del gesto en vídeo con esqueleto superpuesto (el "modo espejo").
-- Multijugador online por cámara y ligas entre amigos.
+- Señalización online propia (hoy PeerJS público) + emparejamiento
+  automático, rankings y ligas entre amigos sobre el 1v1 ya existente.
 
 ## 7. Riesgos y mitigaciones
 

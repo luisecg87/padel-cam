@@ -119,6 +119,22 @@ button {
 
 .link { background: none; text-decoration: underline; opacity: .7; padding: 8px; }
 
+#onlineCode {
+  font: inherit;
+  color: inherit;
+  width: 130px;
+  padding: 12px 14px;
+  border-radius: 14px;
+  border: 2px solid rgba(255,255,255,.3);
+  background: rgba(255,255,255,.08);
+  text-align: center;
+  text-transform: uppercase;
+  letter-spacing: 4px;
+  font-weight: 700;
+  outline: none;
+}
+#onlineCode:focus { border-color: #2ecc71; }
+
 .hint { font-size: .85rem; opacity: .6; max-width: 480px; }
 
 .calib-status {

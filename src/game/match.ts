@@ -25,6 +25,10 @@ export interface MatchOptions {
   targetGames?: number;
   /** Rival del torneo: nombre, camiseta y ajustes de IA propios. */
   rival?: Rival | null;
+  /** Partida entre personas: el lado 'cpu' lo controla otra persona (p. ej. un rival online). */
+  controlP2?: ControlAdapter;
+  /** Nombre del lado cercano cuando hay dos personas (por defecto "Jugador 1"). */
+  p1Name?: string;
   onFinish(logger: MatchLogger, score: Score): void;
   onQuit(): void;
 }
@@ -44,7 +48,7 @@ export class MatchMode {
   private ball = new Ball();
   private player = new PlayerEntity('player');
   private cpu = new PlayerEntity('cpu');
-  private ai: CpuAi;
+  private ai: CpuAi | null;
   private score: Score;
   logger = new MatchLogger();
 
@@ -63,8 +67,9 @@ export class MatchMode {
   private wallSinceHit = false;
 
   private cpuServeTimer = 0;
+  private preServeIdle = 0;
   private pointOverTimer = 0;
-  private whiffCooldown = 0;
+  private whiffCooldowns: Record<Side, number> = { player: 0, cpu: 0 };
   private raf = 0;
   private lastT = 0;
   private running = false;
@@ -79,11 +84,13 @@ export class MatchMode {
   constructor(opts: MatchOptions) {
     this.opts = opts;
     this.score = new Score(opts.targetGames ?? 6);
-    this.ai = new CpuAi(this.cpu, this.ball, opts.difficulty, {
-      canHit: () => this.cpuCanHit(),
-      doHit: (type, aim, quality) => this.executeHit('cpu', type, quality, aim, 0),
-      bounceCount: () => this.bounceCount,
-    }, opts.rival?.ai);
+    this.ai = opts.controlP2
+      ? null
+      : new CpuAi(this.cpu, this.ball, opts.difficulty, {
+          canHit: () => this.cpuCanHit(),
+          doHit: (type, aim, quality) => this.executeHit('cpu', type, quality, aim, 0),
+          bounceCount: () => this.bounceCount,
+        }, opts.rival?.ai);
     if (opts.controlMode === 'camera') this.player.speed = 8;
 
     this.ball.callbacks = {
@@ -105,8 +112,31 @@ export class MatchMode {
     };
   }
 
+  private get isDuel(): boolean {
+    return !!this.opts.controlP2;
+  }
+
   private get rivalName(): string {
-    return this.opts.rival?.name ?? 'la CPU';
+    return this.opts.rival?.name ?? (this.isDuel ? 'Jugador 2' : 'la CPU');
+  }
+
+  private get p1Name(): string {
+    return this.opts.p1Name ?? 'Jugador 1';
+  }
+
+  /** Estado mínimo para retransmitir la partida a un rival online. */
+  netState(): {
+    b: [number, number, number, number];
+    p: [number, number, ShotType | null, number];
+    c: [number, number, ShotType | null, number];
+    replay: boolean;
+  } {
+    return {
+      b: [this.ball.pos.x, this.ball.pos.y, this.ball.pos.z, this.ball.active ? 1 : 0],
+      p: [this.player.x, this.player.z, this.player.swingType, this.player.swingT],
+      c: [this.cpu.x, this.cpu.z, this.cpu.swingType, this.cpu.swingT],
+      replay: this.state === 'replay',
+    };
   }
 
   start(): void {
@@ -161,16 +191,17 @@ export class MatchMode {
 
     this.ball.reset({ x: sx, y: 1.0, z: serverEntity.z });
     this.logger.beginPoint(server);
-    this.ai.resetPoint();
+    this.ai?.resetPoint();
     this.cpuServeTimer = 1.3;
+    this.preServeIdle = 0;
     this.frames.length = 0;
     this.postFrames = 0;
     this.pendingReplay = false;
 
     ui.setServeInfo(
       server === 'player'
-        ? `Tu saque (${this.serveNumber}º) · golpea para sacar`
-        : `Saque de ${this.rivalName} (${this.serveNumber}º)`,
+        ? `${this.isDuel ? `Saque de ${this.p1Name}` : 'Tu saque'} (${this.serveNumber}º) · golpea para sacar`
+        : `Saque de ${this.rivalName} (${this.serveNumber}º)${this.isDuel ? ' · golpea para sacar' : ''}`,
     );
   }
 
@@ -282,7 +313,12 @@ export class MatchMode {
     const res = this.score.addPoint(winner);
     this.updateScoreHud();
 
-    let msg = winner === 'player' ? '¡Punto para ti!' : `Punto para ${this.rivalName}`;
+    let msg =
+      winner === 'player'
+        ? this.isDuel
+          ? `¡Punto para ${this.p1Name}!`
+          : '¡Punto para ti!'
+        : `Punto para ${this.rivalName}`;
     msg += `\n(${reason})`;
     if (res === 'game') {
       msg += '\n🎾 ¡Juego!';
@@ -293,11 +329,13 @@ export class MatchMode {
     } else if (res === 'match') {
       msg =
         this.score.winner === 'player'
-          ? '🏆 ¡PARTIDO GANADO!'
-          : this.opts.rival
-            ? `😤 ${this.rivalName} gana el partido`
+          ? this.isDuel
+            ? `🏆 ¡${this.p1Name} gana el partido!`
+            : '🏆 ¡PARTIDO GANADO!'
+          : this.opts.rival || this.isDuel
+            ? `🏆 ¡${this.rivalName} gana el partido!`
             : '🤖 La CPU gana el partido';
-      if (this.score.winner === 'player') sfx.matchWin();
+      if (this.score.winner === 'player' || this.isDuel) sfx.matchWin();
       else sfx.matchLose();
     } else {
       this.pointsInGame++;
@@ -324,12 +362,12 @@ export class MatchMode {
     return true;
   }
 
-  private tryPlayerSwing(swing: SwingEvent): void {
-    if (this.state === 'preServe' && this.servingSide === 'player') {
+  private tryHumanSwing(side: Side, swing: SwingEvent): void {
+    if (this.state === 'preServe' && this.servingSide === side) {
       this.doServe(swing.dir);
       return;
     }
-    if (this.state !== 'rally' || this.lastHitBy === 'player') return;
+    if (this.state !== 'rally' || this.lastHitBy === side) return;
 
     if (this.isServe && !this.serveBounced) {
       ui.toast('Deja botar el saque', 900);
@@ -337,26 +375,26 @@ export class MatchMode {
     }
 
     const b = this.ball;
-    const p = this.player;
-    const dx = b.pos.x - p.x;
-    const dz = b.pos.z - p.z;
+    const e = side === 'player' ? this.player : this.cpu;
+    const dx = b.pos.x - e.x;
+    const dz = b.pos.z - e.z;
+    const inOwnHalf =
+      side === 'player' ? b.pos.z > COURT.netZ - 0.3 : b.pos.z < COURT.netZ + 0.3;
     const reachable =
-      b.pos.z > COURT.netZ - 0.3 &&
-      Math.abs(dx) < REACH_X &&
-      Math.abs(dz) < REACH_Z &&
-      b.pos.y < 3;
+      inOwnHalf && Math.abs(dx) < REACH_X && Math.abs(dz) < REACH_Z && b.pos.y < 3;
 
     if (!reachable) {
-      if (this.whiffCooldown <= 0) {
-        this.logger.logWhiff();
+      if (this.whiffCooldowns[side] <= 0) {
+        if (side === 'player') this.logger.logWhiff();
         sfx.whiff();
-        this.whiffCooldown = 0.5;
-        this.player.startSwing('forehand');
+        this.whiffCooldowns[side] = 0.5;
+        e.startSwing('forehand');
       }
       return;
     }
 
-    const type = classifySwing(b.pos.y, dx, this.bounceCount, swing);
+    // El jugador de fondo está de cara: su derecha queda en -x
+    const type = classifySwing(b.pos.y, side === 'player' ? dx : -dx, this.bounceCount, swing);
 
     const quality = clamp(
       1 - (Math.abs(dx) / REACH_X) * 0.45 - (Math.abs(dz) / REACH_Z) * 0.45,
@@ -364,9 +402,11 @@ export class MatchMode {
       1,
     );
     // <0 = golpeó antes de tiempo (bola lejos), >0 = tarde (bola encima)
-    const timing = b.pos.z - (p.z - 0.5);
+    const timing = side === 'player' ? b.pos.z - (e.z - 0.5) : e.z + 0.5 - b.pos.z;
 
-    this.executeHit('player', type, quality, this.aimFor(type, swing.dir), timing);
+    const aim = this.aimFor(type, swing.dir);
+    if (side === 'cpu') aim.z = COURT.length - aim.z; // apunta al campo del jugador cercano
+    this.executeHit(side, type, quality, aim, timing);
   }
 
   /** Objetivo del golpe según su tipo (z bajo = profundo en campo CPU). */
@@ -432,17 +472,23 @@ export class MatchMode {
   // ---------- Bucle ----------
 
   private update(dt: number): void {
-    this.whiffCooldown -= dt;
+    this.whiffCooldowns.player -= dt;
+    this.whiffCooldowns.cpu -= dt;
     this.opts.control.update(dt); // también en repetición: mantiene vivo el preview de cámara
+    this.opts.controlP2?.update(dt);
 
     if (this.state === 'replay') {
       this.opts.control.consumeSwings(); // descartar golpes durante la repetición
+      this.opts.controlP2?.consumeSwings();
       this.updateReplay(dt);
       return;
     }
 
     for (const swing of this.opts.control.consumeSwings()) {
-      this.tryPlayerSwing(swing);
+      this.tryHumanSwing('player', swing);
+    }
+    for (const swing of this.opts.controlP2?.consumeSwings() ?? []) {
+      this.tryHumanSwing('cpu', swing);
     }
 
     // Movimiento del jugador
@@ -459,14 +505,38 @@ export class MatchMode {
       this.player.moveToward(move.x, targetZ, dt);
     }
 
-    // Saque de la CPU
-    if (this.state === 'preServe' && this.servingSide === 'cpu') {
-      this.cpuServeTimer -= dt;
-      if (this.cpuServeTimer <= 0) this.doServe(Math.random() < 0.5 ? -0.5 : 0.5);
+    // Saque de la CPU (en partidas entre personas saca cada cual con su golpe,
+    // con saque automático si quien saca se queda inactivo demasiado tiempo)
+    if (this.state === 'preServe') {
+      if (this.servingSide === 'cpu' && !this.isDuel) {
+        this.cpuServeTimer -= dt;
+        if (this.cpuServeTimer <= 0) this.doServe(Math.random() < 0.5 ? -0.5 : 0.5);
+      } else if (this.isDuel) {
+        this.preServeIdle += dt;
+        if (this.preServeIdle > 12) {
+          ui.toast('Saque automático por inactividad', 1200);
+          this.doServe(0);
+        }
+      }
     }
 
-    if (this.state === 'rally') this.ai.update(dt);
-    else if (this.ball.active === false && this.state !== 'preServe') {
+    if (this.isDuel && this.opts.controlP2) {
+      const m2 = this.opts.controlP2.getMove();
+      if (m2.mode === 'velocity') {
+        this.cpu.applyMoveInput(m2.x, m2.z, dt);
+      } else {
+        // Rival con cámara: x absoluta y profundidad automática (espejo del lado cercano)
+        this.cpu.speed = 8;
+        let targetZ = 2.5;
+        if (this.ball.active && this.ball.vel.z < -0.1) {
+          const land = this.ball.predictLanding();
+          targetZ = clamp(land.z - 0.5, 0.6, COURT.netZ - 2);
+        }
+        this.cpu.moveToward(m2.x, targetZ, dt);
+      }
+    } else if (this.state === 'rally') {
+      this.ai?.update(dt);
+    } else if (this.ball.active === false && this.state !== 'preServe') {
       // entre puntos la CPU vuelve a su base
       this.cpu.moveToward(0, this.cpu.baseZ, dt);
     }

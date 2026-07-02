@@ -5,6 +5,7 @@ Juego de pádel para el navegador que se controla **con tu cuerpo a través de l
 ## Modos de juego
 
 - **🎾 Partido vs CPU** — reglas reales de pádel: saque diagonal con dos intentos, punto de oro, rebotes legales en las paredes de cristal, set a 6 juegos. Tres niveles de dificultad.
+- **🌐 Online 1 vs 1** — juega contra otra persona, cada uno desde su dispositivo y con su propia cámara o teclado. Uno crea la partida y comparte un código de 4 letras; el otro se une. P2P por WebRTC (el anfitrión simula el partido; el invitado ve el mundo espejado). Señalización vía PeerJS (configurable con `?peer=host:puerto` para servidor propio).
 - **🏟️ Torneo** — tres rondas contra rivales con personalidad propia (Rubén "Manoplas", Marta "La Muralla" y El Káiser), sets cortos a 3 juegos y trofeos que quedan en tu palmarés.
 - **🎯 Modo práctica** — máquina lanza-bolas con drills de derecha, revés, voleas (derecha/revés), bandeja, víbora y remate, con corrección inmediata tras cada bola.
 - **🧑‍🏫 Informe del entrenador** — al final de cada partido o práctica: estadísticas (winners, errores por golpe, puntos en la red…) y consejos personalizados en español.
@@ -35,7 +36,9 @@ npm run build    # build de producción (carpeta dist/)
 npm run typecheck
 ```
 
-Stack: Vite + TypeScript vanilla + Canvas 2D + `@mediapipe/tasks-vision`. Sin backend.
+Stack: Vite + TypeScript vanilla + Canvas 2D + `@mediapipe/tasks-vision` + `peerjs` (online P2P). Sin backend propio: la señalización online usa la nube pública de PeerJS por defecto.
+
+Para probar el online en local: `npx peerjs --port 9000` (o un script con `PeerServer({ port: 9000, host: '127.0.0.1' })`) y abre dos pestañas con `?peer=127.0.0.1:9000`.
 
 ## Estructura
 
@@ -44,6 +47,7 @@ src/
   game/      pista, bola, física, IA rival, puntuación, render 2.5D, partido
   camera/    tracking de pose, detección de gestos, calibración
   modes/     modo práctica y torneo
+  net/       partida online: señalización, protocolo y vista del invitado
   analysis/  registro de golpes, consejos del entrenador y progreso guardado
   audio/     efectos de sonido sintetizados (WebAudio)
   ui/        pantallas, HUD, control por teclado/táctil

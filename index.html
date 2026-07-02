@@ -58,6 +58,7 @@
       <div class="main-buttons">
         <button class="big" id="btnMatch">🎾 Partido vs CPU</button>
         <button class="big gold" id="btnTournament">🏟️ Torneo</button>
+        <button class="big" id="btnOnline">🌐 Online 1 vs 1</button>
         <button class="big" id="btnPractice">🎯 Modo Práctica</button>
         <button class="big secondary" id="btnProgress">📈 Mi progreso</button>
       </div>
@@ -103,6 +104,21 @@
         <button class="big" id="btnAgain">Jugar otra vez</button>
         <button class="link" id="btnReportProgress">Ver mi progreso</button>
         <button class="link" id="btnReportMenu">Volver al menú</button>
+      </div>
+    </div>
+
+    <!-- Partida online 1v1 -->
+    <div class="screen" id="online">
+      <h2>🌐 Online 1 vs 1</h2>
+      <p class="hint">Juega contra otra persona, cada uno desde su dispositivo (y con su propia cámara si quiere). Uno crea la partida y comparte el código; el otro se une. Set corto a 3 juegos.</p>
+      <div id="onlineStatus" class="calib-status">Elige una opción</div>
+      <div class="main-buttons">
+        <button class="big" id="btnOnlineHost">🎾 Crear partida</button>
+        <div class="btn-row">
+          <input id="onlineCode" maxlength="4" placeholder="CÓDIGO" autocomplete="off" />
+          <button class="big" id="btnOnlineJoin">Unirse</button>
+        </div>
+        <button class="link" id="btnOnlineBack">Volver al menú</button>
       </div>
     </div>
 
