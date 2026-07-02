@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <meta name="theme-color" content="#0b1e33" />
+  <title>Pádel Cam — juega con tu cuerpo</title>
+  <link rel="stylesheet" href="/src/style.css" />
+</head>
+<body>
+  <canvas id="game"></canvas>
+  <video id="cam" playsinline muted autoplay></video>
+  <canvas id="camPreview" width="180" height="135"></canvas>
+
+  <div id="ui">
+    <!-- Menú principal -->
+    <div class="screen active" id="menu">
+      <h1>🎾 Pádel Cam</h1>
+      <p class="tagline">Juega pádel con tu cuerpo, desde el navegador</p>
+
+      <div class="menu-group">
+        <label>Control</label>
+        <div class="btn-row" id="controlRow">
+          <button class="opt selected" data-control="camera">📷 Cámara</button>
+          <button class="opt" data-control="keyboard">⌨️ Teclado / Táctil</button>
+        </div>
+      </div>
+
+      <div class="menu-group">
+        <label>Dificultad</label>
+        <div class="btn-row" id="difficultyRow">
+          <button class="opt" data-diff="easy">Fácil</button>
+          <button class="opt selected" data-diff="medium">Media</button>
+          <button class="opt" data-diff="hard">Difícil</button>
+        </div>
+      </div>
+
+      <div class="menu-group">
+        <label>Modo práctica: golpe a entrenar</label>
+        <div class="btn-row" id="drillRow">
+          <button class="opt selected" data-drill="mixto">Mixto</button>
+          <button class="opt" data-drill="forehand">Derecha</button>
+          <button class="opt" data-drill="backhand">Revés</button>
+          <button class="opt" data-drill="volley">Volea</button>
+          <button class="opt" data-drill="smash">Remate</button>
+        </div>
+      </div>
+
+      <div class="main-buttons">
+        <button class="big" id="btnMatch">🏆 Partido vs CPU</button>
+        <button class="big" id="btnPractice">🎯 Modo Práctica</button>
+      </div>
+
+      <p class="hint" id="menuHint"></p>
+    </div>
+
+    <!-- Calibración de cámara -->
+    <div class="screen" id="calib">
+      <h2>📷 Calibración</h2>
+      <p>Coloca el dispositivo de modo que la cámara te vea <b>de la cintura hacia arriba</b>, a 1.5–2 metros.</p>
+      <div id="calibStatus" class="calib-status">Iniciando cámara…</div>
+      <div class="calib-tips">
+        <p>🏃 Muévete a los lados para desplazarte por la pista</p>
+        <p>💪 Mueve el brazo rápido para golpear · brazo arriba = remate</p>
+      </div>
+      <button class="big" id="btnCalibReady" disabled>¡Listo, a jugar!</button>
+      <button class="link" id="btnCalibCancel">Volver al menú</button>
+    </div>
+
+    <!-- HUD durante el juego -->
+    <div id="hud">
+      <div id="scoreboard">
+        <span id="scoreGames"></span>
+        <span id="scorePoints"></span>
+      </div>
+      <div id="serveInfo"></div>
+      <div id="toast"></div>
+      <div id="drillHud"></div>
+      <button id="btnQuit" title="Salir">✕</button>
+    </div>
+
+    <!-- Informe post-partida -->
+    <div class="screen" id="report">
+      <h2 id="reportTitle">Informe del partido</h2>
+      <div id="reportStats"></div>
+      <h3>🧑‍🏫 Consejos de tu entrenador</h3>
+      <div id="reportTips"></div>
+      <div class="main-buttons">
+        <button class="big" id="btnAgain">Jugar otra vez</button>
+        <button class="link" id="btnReportMenu">Volver al menú</button>
+      </div>
+    </div>
+  </div>
+
+  <script type="module" src="/src/main.ts"></script>
+</body>
+</html>
