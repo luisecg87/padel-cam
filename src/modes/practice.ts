@@ -279,7 +279,13 @@ export class PracticeMode {
 
     const type = classifySwing(b.pos.y, dx, this.bounceCount, swing);
 
-    const quality = clamp(1 - (Math.abs(dx) / REACH_X) * 0.45 - (Math.abs(dz) / REACH_Z) * 0.45, 0.15, 1);
+    let quality = clamp(1 - (Math.abs(dx) / REACH_X) * 0.45 - (Math.abs(dz) / REACH_Z) * 0.45, 0.15, 1);
+    let speedMul = 1;
+    // La técnica del gesto real también cuenta en la práctica
+    if (swing.form) {
+      quality = clamp(quality * (0.72 + 0.28 * swing.form.posture), 0.1, 1);
+      speedMul = clamp(0.85 + 0.35 * swing.power, 0.78, 1.18);
+    }
     const timing = b.pos.z - (p.z - 0.5);
 
     if (this.currentAttempt) {
@@ -297,6 +303,8 @@ export class PracticeMode {
       aim = { x: clamp(swing.dir * 2.5 + (Math.random() - 0.5), -4.2, 4.2), z: 3.5 + Math.random() * 4 };
     }
     b.vel = computeShotVelocity(b.pos, aim, type, quality);
+    b.vel.x *= speedMul;
+    b.vel.z *= speedMul;
     b.spin = type === 'vibora' ? Math.sign(b.vel.x || 1) * SHOT_PARAMS.vibora.spin : 0;
     this.player.startSwing(type);
     sfx.hit(type);

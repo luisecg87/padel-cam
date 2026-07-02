@@ -60,6 +60,8 @@ export class Renderer {
   private crowdExcite = 0;
   /** Camiseta del rival: los rivales del torneo tienen su propio color. */
   cpuPalette: Palette = CPU_PALETTE;
+  /** Zonas objetivo de los desafíos, dibujadas sobre la pista. */
+  targetZones: Array<{ x0: number; x1: number; z0: number; z1: number }> = [];
   // Cielo estrellado fijo (posiciones relativas a la pantalla)
   private stars = Array.from({ length: 70 }, () => ({
     x: Math.random(),
@@ -427,6 +429,24 @@ export class Renderer {
     this.groundLine(-hw, COURT.serviceLineCpu, hw, COURT.serviceLineCpu, 2);
     this.groundLine(-hw, COURT.serviceLinePlayer, hw, COURT.serviceLinePlayer, 2);
     this.groundLine(0, COURT.serviceLineCpu, 0, COURT.serviceLinePlayer, 2); // línea central
+
+    // Zonas objetivo de los desafíos, con pulso sutil
+    if (this.targetZones.length > 0) {
+      const pulse = 0.14 + Math.sin(performance.now() / 300) * 0.05;
+      for (const z of this.targetZones) {
+        this.groundPoly([
+          [z.x0, z.z0],
+          [z.x1, z.z0],
+          [z.x1, z.z1],
+          [z.x0, z.z1],
+        ]);
+        ctx.fillStyle = `rgba(52, 211, 153, ${pulse.toFixed(3)})`;
+        ctx.fill();
+        ctx.strokeStyle = 'rgba(52, 211, 153, 0.85)';
+        ctx.lineWidth = 2.5;
+        ctx.stroke();
+      }
+    }
   }
 
   private drawNet(): void {

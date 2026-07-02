@@ -62,6 +62,16 @@ h3 { margin-top: 10px; }
   display: flex; flex-direction: column; gap: 8px; align-items: center;
 }
 .coach-streak { font-weight: 700; color: #ffd166; font-size: .95rem; }
+.coach-level { font-weight: 800; font-size: 1rem; }
+.coach-level:empty, .coach-xpbar:empty { display: none; }
+.coach-xpbar {
+  width: min(320px, 80%);
+  height: 6px;
+  border-radius: 3px;
+  background: rgba(255,255,255,.12);
+  overflow: hidden;
+}
+#coachXpFill { height: 100%; background: linear-gradient(90deg, #2ecc71, #ffd166); border-radius: 3px; }
 .coach-tip { font-size: .92rem; opacity: .9; }
 .coach-card[hidden] { display: none; }
 
@@ -217,6 +227,19 @@ button {
 @keyframes replayBlink { 50% { opacity: .45; } }
 
 .current-round { border: 1px solid #ffd166; }
+
+#fireChip {
+  position: absolute; top: 58px; right: 12px;
+  background: rgba(255, 120, 40, .18);
+  border: 1px solid rgba(255, 150, 60, .55);
+  color: #ffb366;
+  font-weight: 800;
+  padding: 5px 12px;
+  border-radius: 12px;
+  display: none;
+}
+#fireChip.show { display: block; animation: firePulse 1s ease-in-out infinite; }
+@keyframes firePulse { 50% { transform: scale(1.07); } }
 
 #btnQuit {
   position: absolute; top: 10px; right: 10px;
@@ -410,6 +433,33 @@ button {
   font-size: 1rem;
   pointer-events: auto;
 }
+
+/* ============ Desafíos ============ */
+.challenge-card {
+  background: rgba(255,255,255,.06);
+  border-radius: 14px;
+  padding: 14px 16px;
+  display: flex; align-items: center; gap: 14px;
+  text-align: left;
+}
+.challenge-card .icon { font-size: 1.9rem; }
+.challenge-card .info { flex: 1; }
+.challenge-card .info b { display: block; font-size: 1.05rem; }
+.challenge-card .info p { font-size: .82rem; opacity: .7; margin-top: 2px; }
+.challenge-card .meta { font-size: .78rem; opacity: .8; margin-top: 4px; color: #ffd166; }
+.challenge-card .play {
+  padding: 10px 22px;
+  border-radius: 12px;
+  font-weight: 700;
+  background: linear-gradient(135deg, #2ecc71, #27ae60);
+  color: #08260f;
+}
+
+.ce-stars { font-size: 3rem; letter-spacing: 8px; color: #ffd166; }
+.ce-score { display: flex; align-items: baseline; gap: 8px; }
+.ce-score span:first-child { font-size: 4rem; font-weight: 900; }
+.ce-score .lbl { opacity: .6; font-size: 1.1rem; }
+.ce-xp { color: #34d399; font-weight: 800; font-size: 1.1rem; }
 
 /* ============ Resumen de sesión ============ */
 #trainSummary { gap: 16px; }

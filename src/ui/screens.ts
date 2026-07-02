@@ -1,7 +1,8 @@
 import { sfx } from '../audio/sfx';
 import { RIVALS, ROUND_NAMES, TOURNEY_GAMES } from '../modes/tournament';
 import type { Report } from '../analysis/coach';
-import type { Correction, DrillSuggestion, ProgressSummary, SavedSession } from '../analysis/progress';
+import type { ChallengeRecord, Correction, DrillSuggestion, ProgressSummary, SavedSession, XpInfo } from '../analysis/progress';
+import type { ChallengeDef, ChallengeResult } from '../modes/challenges';
 import type { TrainingSummary } from '../training/session';
 import { SHOT_NAMES } from '../types';
 import type { ControlMode, Difficulty, DrillType } from '../types';
@@ -20,6 +21,8 @@ type ScreenId =
   | 'tourney'
   | 'online'
   | 'trainSummary'
+  | 'challenges'
+  | 'challengeEnd'
   | 'none';
 
 export type TourneyPhase = 'play' | 'lost' | 'champion';
@@ -51,6 +54,9 @@ class UI {
   onOnlineBack: (() => void) | null = null;
   onStartTraining: (() => void) | null = null;
   onTrainAgain: (() => void) | null = null;
+  onShowChallenges: (() => void) | null = null;
+  onPlayChallenge: ((id: string) => void) | null = null;
+  onChallengeAgain: (() => void) | null = null;
 
   private toastTimer: number | null = null;
   private tourneyPhase: TourneyPhase = 'play';
@@ -92,6 +98,15 @@ class UI {
     $('#btnTraining').addEventListener('click', () => this.onStartTraining?.());
     $('#btnTrainAgain').addEventListener('click', () => this.onTrainAgain?.());
     $('#btnTrainMenu').addEventListener('click', () => this.show('menu'));
+    $('#btnChallenges').addEventListener('click', () => this.onShowChallenges?.());
+    $('#btnChallengesBack').addEventListener('click', () => this.show('menu'));
+    $('#btnChallengeAgain').addEventListener('click', () => this.onChallengeAgain?.());
+    $('#btnChallengeList').addEventListener('click', () => this.onShowChallenges?.());
+    $('#btnChallengeMenu').addEventListener('click', () => this.show('menu'));
+    $('#challengeList').addEventListener('click', (e) => {
+      const btn = (e.target as HTMLElement).closest<HTMLButtonElement>('button[data-challenge]');
+      if (btn) this.onPlayChallenge?.(btn.dataset.challenge!);
+    });
 
     // Sonido: desbloquear el AudioContext con el primer gesto y clicks de UI
     const btnSound = $('#btnSound') as HTMLButtonElement;
@@ -144,13 +159,26 @@ class UI {
   }
 
   /** Tarjeta "entrenamiento del día" del menú: racha + drill sugerido. */
-  setCoach(summary: ProgressSummary, suggestion: DrillSuggestion | null, trophies = 0): void {
+  setCoach(
+    summary: ProgressSummary,
+    suggestion: DrillSuggestion | null,
+    trophies = 0,
+    xp: XpInfo | null = null,
+  ): void {
     const card = $('#coachCard');
-    if (summary.totalSessions === 0) {
+    if (summary.totalSessions === 0 && (!xp || xp.xp === 0)) {
       card.hidden = true;
       return;
     }
     card.hidden = false;
+    if (xp && xp.xp > 0) {
+      $('#coachLevel').textContent = `Nivel ${xp.level} · ${xp.title}`;
+      $('#coachXpFill').style.width = `${Math.round((xp.levelXp / xp.levelSize) * 100)}%`;
+      ($('#coachXpBar') as HTMLElement).style.display = 'block';
+    } else {
+      $('#coachLevel').textContent = '';
+      ($('#coachXpBar') as HTMLElement).style.display = 'none';
+    }
     const fire = summary.streakDays >= 3 ? '🔥🔥' : '🔥';
     const cup = trophies > 0 ? `🏆 ${trophies} · ` : '';
     $('#coachStreak').textContent =
@@ -197,6 +225,17 @@ class UI {
 
   setReplay(v: boolean): void {
     $('#replayBadge').classList.toggle('show', v);
+  }
+
+  /** Racha de buenos golpes: 🔥 visible a partir de 3 seguidos. */
+  setFire(n: number): void {
+    const el = $('#fireChip');
+    if (n >= 3) {
+      el.textContent = `🔥 x${n}`;
+      el.classList.add('show');
+    } else {
+      el.classList.remove('show');
+    }
   }
 
   setOnlineStatus(text: string, state: 'wait' | 'ok' | 'err'): void {
@@ -258,7 +297,7 @@ class UI {
     ($('#btnCalibReady') as HTMLButtonElement).disabled = state !== 'ok';
   }
 
-  showReport(title: string, report: Report, saved = false): void {
+  showReport(title: string, report: Report, saved = false, xpNote = ''): void {
     $('#reportTitle').textContent = title;
     $('#reportStats').innerHTML = report.stats
       .map(
@@ -268,15 +307,50 @@ class UI {
     $('#reportTips').innerHTML = report.tips
       .map((t) => `<div class="tip${t.warn ? ' warn' : ''}">${t.warn ? '⚠️' : '✅'} ${t.text}</div>`)
       .join('');
-    $('#reportSaved').textContent = saved
-      ? '💾 Informe guardado: revisa tus correcciones en «Mi progreso»'
-      : '';
+    const parts = [
+      saved ? '💾 Informe guardado en «Mi progresión»' : '',
+      xpNote,
+    ].filter(Boolean);
+    $('#reportSaved').textContent = parts.join(' · ');
     this.show('report');
   }
 
+  /** Selector de desafíos con récords y estrellas. */
+  showChallenges(defs: ChallengeDef[], records: Record<string, ChallengeRecord>): void {
+    $('#challengeList').innerHTML = defs
+      .map((d) => {
+        const r = records[d.id];
+        const stars = '★'.repeat(r?.stars ?? 0) + '☆'.repeat(3 - (r?.stars ?? 0));
+        const meta = r ? `${stars} · Récord: ${r.best} ${d.unit}` : `${stars} · Sin jugar todavía`;
+        return `<div class="challenge-card"><div class="icon">${d.icon}</div><div class="info"><b>${d.name}</b><p>${d.desc}</p><div class="meta">${meta}</div></div><button class="play" data-challenge="${d.id}">Jugar</button></div>`;
+      })
+      .join('');
+    this.show('challenges');
+  }
+
+  /** Resultado de un desafío: puntuación, estrellas, récord y XP. */
+  showChallengeEnd(
+    result: ChallengeResult,
+    record: ChallengeRecord,
+    isNewBest: boolean,
+    xpGained: number,
+    leveledUp: boolean,
+  ): void {
+    $('#ceName').textContent = `${result.def.icon} ${result.def.name.toUpperCase()}`;
+    $('#ceStars').textContent = '★'.repeat(result.stars) + '☆'.repeat(3 - result.stars);
+    $('#ceScore').textContent = `${result.score}`;
+    $('#ceUnit').textContent = result.def.unit;
+    $('#ceRecord').textContent = isNewBest
+      ? '🎉 ¡Nuevo récord personal!'
+      : `Récord personal: ${record.best} ${result.def.unit}`;
+    $('#ceXp').textContent = `+${xpGained} XP${leveledUp ? ' · ⬆️ ¡SUBES DE NIVEL!' : ''}`;
+    this.show('challengeEnd');
+  }
+
   /** TrainingSessionSummary: resumen visual de la sesión de técnica. */
-  showTrainingSummary(s: TrainingSummary): void {
-    $('#tsShot').textContent = `SESIÓN · ${SHOT_NAMES[s.shot].toUpperCase()}`;
+  showTrainingSummary(s: TrainingSummary, xpGained = 0): void {
+    $('#tsShot').textContent =
+      `SESIÓN · ${SHOT_NAMES[s.shot].toUpperCase()}` + (xpGained > 0 ? ` · +${xpGained} XP` : '');
     $('#tsReps').textContent = `${s.reps.length}`;
     $('#tsCorrect').textContent = `${s.correct}`;
     $('#tsStreak').textContent = `${s.bestStreak}`;

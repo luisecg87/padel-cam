@@ -108,6 +108,98 @@ export function addTrophy(): number {
   return n;
 }
 
+// ---------- Progresión del jugador: XP y nivel ----------
+
+const XP_KEY = 'padelcam.xp.v1';
+const LEVEL_TITLES = ['Novato', 'Bronce', 'Plata', 'Oro', 'Platino', 'Leyenda'];
+
+export interface XpInfo {
+  xp: number;
+  level: number; // 1..
+  title: string;
+  levelXp: number; // xp dentro del nivel actual
+  levelSize: number; // xp necesaria para pasar de nivel
+}
+
+function levelFromXp(xp: number): number {
+  return Math.floor(Math.sqrt(xp / 120)) + 1;
+}
+
+function xpAtLevel(level: number): number {
+  return (level - 1) * (level - 1) * 120;
+}
+
+export function getXp(): XpInfo {
+  let xp = 0;
+  try {
+    xp = Number(localStorage.getItem(XP_KEY)) || 0;
+  } catch {
+    /* sin almacenamiento */
+  }
+  const level = levelFromXp(xp);
+  const base = xpAtLevel(level);
+  return {
+    xp,
+    level,
+    title: LEVEL_TITLES[Math.min(Math.floor((level - 1) / 3), LEVEL_TITLES.length - 1)],
+    levelXp: xp - base,
+    levelSize: xpAtLevel(level + 1) - base,
+  };
+}
+
+/** Suma XP y devuelve el estado (con aviso de subida de nivel). */
+export function addXp(amount: number): XpInfo & { leveledUp: boolean } {
+  const before = getXp();
+  const xp = before.xp + Math.max(0, Math.round(amount));
+  try {
+    localStorage.setItem(XP_KEY, String(xp));
+  } catch {
+    /* sin almacenamiento */
+  }
+  const after = getXp();
+  return { ...after, leveledUp: after.level > before.level };
+}
+
+// ---------- Récords de desafíos ----------
+
+const CHALLENGE_KEY = 'padelcam.challenges.v1';
+
+export interface ChallengeRecord {
+  best: number;
+  stars: number; // 0..3
+}
+
+export function loadChallengeRecords(): Record<string, ChallengeRecord> {
+  try {
+    const raw = localStorage.getItem(CHALLENGE_KEY);
+    return raw ? (JSON.parse(raw) as Record<string, ChallengeRecord>) : {};
+  } catch {
+    return {};
+  }
+}
+
+/** Guarda si mejora; devuelve el récord vigente y si fue récord nuevo. */
+export function saveChallengeResult(
+  id: string,
+  score: number,
+  stars: number,
+): { record: ChallengeRecord; isNewBest: boolean } {
+  const all = loadChallengeRecords();
+  const prev = all[id];
+  const isNewBest = !prev || score > prev.best;
+  const record: ChallengeRecord = {
+    best: isNewBest ? score : prev.best,
+    stars: Math.max(stars, prev?.stars ?? 0),
+  };
+  all[id] = record;
+  try {
+    localStorage.setItem(CHALLENGE_KEY, JSON.stringify(all));
+  } catch {
+    /* sin almacenamiento */
+  }
+  return { record, isNewBest };
+}
+
 // ---------- Racha y plan del día (bucle de retención) ----------
 
 export interface ProgressSummary {

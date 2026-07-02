@@ -6,14 +6,20 @@ import { PlayerEntity } from './game/player';
 import { analyzeMatch } from './analysis/coach';
 import {
   addTrophy,
+  addXp,
   clearSessions,
+  getXp,
+  loadChallengeRecords,
   loadSessions,
   loadTrophies,
   pendingCorrections,
+  saveChallengeResult,
   saveSession,
   suggestDrill,
   summarize,
 } from './analysis/progress';
+import { CHALLENGES, ChallengeMode } from './modes/challenges';
+import type { ChallengeId } from './modes/challenges';
 import { RIVALS, ROUND_NAMES, TOURNEY_GAMES } from './modes/tournament';
 import { sfx } from './audio/sfx';
 import { OnlineSession, RemoteControl } from './net/online';
@@ -38,7 +44,7 @@ const preview = document.querySelector<HTMLCanvasElement>('#camPreview')!;
 const renderer = new Renderer(canvas);
 ui.init();
 
-let currentMode: MatchMode | PracticeMode | null = null;
+let currentMode: MatchMode | PracticeMode | ChallengeMode | null = null;
 let currentTraining: CameraTrainingView | null = null;
 let currentControl: ControlAdapter | null = null;
 let currentOnline: OnlineSession | null = null;
@@ -141,8 +147,10 @@ async function startMatch(): Promise<void> {
         stats: report.stats,
         tips: report.tips,
       });
+      const xpGained = score.winner === 'player' ? 120 : 60;
+      const xp = addXp(xpGained);
       ui.setCamPreviewVisible(false);
-      ui.showReport(title, report, saved);
+      ui.showReport(title, report, saved, `+${xpGained} XP${xp.leveledUp ? ' · ⬆️ ¡subes de nivel!' : ''}`);
     },
     onQuit: backToMenu,
   });
@@ -178,8 +186,9 @@ async function startPractice(): Promise<void> {
         stats: report.stats,
         tips: report.tips,
       });
+      const xpP = addXp(40);
       ui.setCamPreviewVisible(false);
-      ui.showReport('🎯 Informe de práctica', report, saved);
+      ui.showReport('🎯 Informe de práctica', report, saved, `+40 XP${xpP.leveledUp ? ' · ⬆️ ¡subes de nivel!' : ''}`);
     },
   });
   currentMode = practice;
@@ -224,11 +233,13 @@ function playTourneyRound(): void {
         stats: report.stats,
         tips: report.tips,
       });
+      addXp(score.winner === 'player' ? 100 : 50);
       ui.setCamPreviewVisible(false);
       if (score.winner !== 'player') {
         ui.showTourney(round, 'lost');
       } else if (round === RIVALS.length - 1) {
         const trophies = addTrophy();
+        addXp(300);
         sfx.cheer(true);
         ui.showTourney(round, 'champion', trophies);
       } else {
@@ -328,11 +339,14 @@ function startOnlineMatch(session: OnlineSession): void {
         stats: report.stats,
         tips: report.tips,
       });
+      const xpGained = score.winner === 'player' ? 150 : 60;
+      const xpO = addXp(xpGained);
       ui.setCamPreviewVisible(false);
       ui.showReport(
         score.winner === 'player' ? `🏆 ¡Ganaste ${p}-${c}!` : `Perdiste ${p}-${c}… ¡la próxima cae!`,
         report,
         saved,
+        `+${xpGained} XP${xpO.leveledUp ? ' · ⬆️ ¡subes de nivel!' : ''}`,
       );
     },
     onQuit: () => {
@@ -423,6 +437,53 @@ function startGuestView(session: OnlineSession): void {
   guest.start();
 }
 
+// ---- Desafíos jugables ----
+
+let lastChallengeId: ChallengeId = 'diana';
+
+async function startChallenge(id: ChallengeId): Promise<void> {
+  const def = CHALLENGES.find((c) => c.id === id);
+  if (!def) return;
+  lastChallengeId = id;
+  stopIdle();
+  const control = await buildControl();
+  if (!control) {
+    backToMenu();
+    return;
+  }
+  currentControl = control;
+  ui.show('none');
+  ui.setCamPreviewVisible(ui.settings.control === 'camera');
+
+  const challenge = new ChallengeMode({
+    renderer,
+    control,
+    controlMode: ui.settings.control,
+    def,
+    onFinish: (result) => {
+      currentMode = null;
+      const { record, isNewBest } = saveChallengeResult(def.id, result.score, result.stars);
+      const xpGained = Math.max(5, Math.round(result.score * def.xpMul));
+      const xp = addXp(xpGained);
+      if (xp.leveledUp) sfx.cheer(true);
+      saveSession({
+        date: Date.now(),
+        mode: 'practice',
+        title: `Desafío ${def.name}: ${result.score} ${def.unit}`,
+        stats: [
+          { lbl: 'Puntuación', val: `${result.score} ${def.unit}` },
+          { lbl: 'Estrellas', val: '★'.repeat(result.stars) || '—' },
+        ],
+        tips: [],
+      });
+      ui.setCamPreviewVisible(false);
+      ui.showChallengeEnd(result, record, isNewBest, xpGained, xp.leveledUp);
+    },
+  });
+  currentMode = challenge;
+  challenge.start();
+}
+
 // ---- Entrenamiento técnico con cámara ----
 
 function drillToShot(d: DrillType): ShotType {
@@ -477,7 +538,9 @@ async function startTraining(): Promise<void> {
           { warn: false, text: summary.recommendation },
         ],
       });
-      ui.showTrainingSummary(summary);
+      const xpT = addXp(summary.consistency);
+      if (xpT.leveledUp) sfx.cheer(true);
+      ui.showTrainingSummary(summary, summary.consistency);
     },
     onQuit: () => {
       currentTraining = null;
@@ -497,7 +560,7 @@ let lastSuggestion: ReturnType<typeof suggestDrill> = null;
 function refreshCoachCard(): void {
   const sessions = loadSessions();
   lastSuggestion = suggestDrill(pendingCorrections(sessions));
-  ui.setCoach(summarize(sessions), lastSuggestion, loadTrophies());
+  ui.setCoach(summarize(sessions), lastSuggestion, loadTrophies(), getXp());
 }
 
 ui.onStartMatch = () => void startMatch();
@@ -519,6 +582,9 @@ ui.onOnlineJoin = (code) => void joinOnline(code);
 ui.onOnlineBack = backToMenu;
 ui.onStartTraining = () => void startTraining();
 ui.onTrainAgain = () => void startTraining();
+ui.onShowChallenges = () => ui.showChallenges(CHALLENGES, loadChallengeRecords());
+ui.onPlayChallenge = (id) => void startChallenge(id as ChallengeId);
+ui.onChallengeAgain = () => void startChallenge(lastChallengeId);
 ui.onCoachTrain = () => {
   if (!lastSuggestion) return;
   ui.selectDrill(lastSuggestion.drill);
@@ -537,7 +603,7 @@ startIdle();
 declare global {
   interface Window {
     __padel: {
-      getMode(): MatchMode | PracticeMode | null;
+      getMode(): MatchMode | PracticeMode | ChallengeMode | null;
       ui: typeof ui;
     };
   }

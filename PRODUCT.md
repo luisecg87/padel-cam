@@ -3,6 +3,24 @@
 *Análisis de product manager: cómo convertir Pádel Cam en un producto de pago
 para el público adicto al pádel.*
 
+## 0. Identidad del producto
+
+**Juego de pádel controlado con el cuerpo, donde jugar bien de verdad es la
+forma de ganar.** No es una app de análisis técnico ni un arcade de botones:
+la cámara lee tu gesto real y su calidad ES el gameplay (timing → precisión,
+potencia → velocidad de bola, postura → probabilidad de error, racha →
+confianza). El producto se estructura en cinco modos:
+
+1. **Entrenamiento técnico** — el gimnasio: cámara a pantalla completa,
+   zonas de impacto, timing y correcciones (alimenta la progresión).
+2. **Desafíos jugables** — objetivos arcade con estrellas y récords donde la
+   técnica puntúa (Diana, El Muro; la lista crece).
+3. **Partido contra IA** — partidos y Torneo con rivales con personalidad.
+4. **Multijugador** — online 1v1 por código de sala (ya jugable; el futuro:
+   emparejamiento, rankings y ligas).
+5. **Progresión del jugador** — XP y nivel transversales a todos los modos,
+   racha diaria, trofeos, correcciones del coach y plan del día.
+
 ## 1. Propuesta de valor
 
 **"Tu entrenador de pádel en el salón de casa."**

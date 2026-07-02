@@ -1,9 +1,16 @@
 // Adaptador de control común: teclado/táctil y cámara implementan esta interfaz.
 
+/** Calidad técnica del gesto real (solo con cámara): afecta al gameplay. */
+export interface SwingForm {
+  posture: number; // 0..1: postura en el momento del golpe (piernas, base, equilibrio)
+  extension: number | null; // distancia muñeca-cadera en anchos de hombro (punto de impacto)
+}
+
 export interface SwingEvent {
   dir: -1 | 0 | 1; // hacia dónde se dirige el golpe (izq/centro/dcha)
   overhead: boolean; // gesto por encima de la cabeza (remate/bandeja/víbora)
   power: number; // 0..1: fuerza del gesto (cámara: velocidad de la muñeca)
+  form?: SwingForm; // presente solo cuando el golpe viene de la cámara
 }
 
 export type MoveIntent =

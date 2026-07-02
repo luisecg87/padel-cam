@@ -8,7 +8,8 @@ import { classifySwing, computeShotVelocity, SHOT_PARAMS } from './shots';
 import { MatchLogger } from '../analysis/logger';
 import { sfx } from '../audio/sfx';
 import { ui } from '../ui/screens';
-import { clamp, opponent } from '../types';
+import { clamp, isOverheadShot, opponent } from '../types';
+import type { SwingForm } from '../ui/input';
 import { CPU_PALETTE } from './render';
 import type { Rival } from '../modes/tournament';
 import type { ControlAdapter, SwingEvent } from '../ui/input';
@@ -73,6 +74,15 @@ export class MatchMode {
   private raf = 0;
   private lastT = 0;
   private running = false;
+
+  // Confianza del jugador: la racha de buenos gestos da bonus; los errores
+  // repetidos la hunden y despiertan al coach.
+  private confidence = 0.5;
+  private goodRun = 0; // golpes buenos consecutivos
+  private errorRun = 0; // errores no forzados consecutivos
+  private lastPlayerForm: SwingForm | null = null;
+  private lastPlayerTiming = 0;
+  private coachCooldown = 0;
 
   // Repetición a cámara lenta de puntos espectaculares
   private frames: ReplayFrame[] = [];
@@ -162,6 +172,7 @@ export class MatchMode {
     cancelAnimationFrame(this.raf);
     ui.setHudVisible(false);
     ui.setReplay(false);
+    ui.setFire(0);
   }
 
   // ---------- Saque ----------
@@ -301,6 +312,7 @@ export class MatchMode {
     this.ball.active = false;
     this.logger.endPoint(winner, reason);
     this.opts.renderer.exciteCrowd(winner === 'player' ? 1 : 0.45);
+    this.updateConfidence(winner);
 
     // ¿Merece repetición? Winner propio tras un intercambio, o remate/víbora ganadora
     const pt = this.logger.points[this.logger.points.length - 1];
@@ -353,6 +365,43 @@ export class MatchMode {
     ui.updateScore(this.score.gamesLabel(), this.score.pointsLabel());
   }
 
+  /** Confianza y coach reactivo: los errores repetidos traen consejo concreto. */
+  private updateConfidence(winner: Side): void {
+    const pt = this.logger.points[this.logger.points.length - 1];
+    const last = pt?.shots[pt.shots.length - 1];
+    const playerError = !!last && last.by === 'player' && last.result === 'error';
+    const playerWinner = !!last && last.by === 'player' && last.result === 'winner';
+
+    if (playerWinner) this.confidence = clamp(this.confidence + 0.14, 0, 1);
+    else if (winner === 'player') this.confidence = clamp(this.confidence + 0.07, 0, 1);
+    if (playerError) this.confidence = clamp(this.confidence - 0.15, 0, 1);
+    // deriva suave hacia el punto neutro
+    this.confidence += (0.5 - this.confidence) * 0.06;
+
+    if (playerError) {
+      this.errorRun++;
+      this.goodRun = 0;
+      ui.setFire(0);
+    } else if (winner === 'player') {
+      this.errorRun = 0;
+    }
+
+    this.coachCooldown = Math.max(0, this.coachCooldown - 1);
+    if (this.errorRun >= 3 && this.coachCooldown === 0 && !this.isDuel) {
+      this.errorRun = 0;
+      this.coachCooldown = 4; // puntos hasta poder volver a hablar
+      let advice: string;
+      const f = this.lastPlayerForm;
+      if (f && f.posture < 0.6) advice = 'flexiona las piernas y busca equilibrio antes de golpear';
+      else if (f && f.extension !== null && (f.extension < 0.85 || f.extension > 1.8))
+        advice = 'golpea al costado del cuerpo, ni encima ni estirado del todo';
+      else if (this.lastPlayerTiming > 0.5) advice = 'prepara la pala antes: estás llegando tarde';
+      else if (this.lastPlayerTiming < -0.5) advice = 'espera la bola, estás golpeando antes de tiempo';
+      else advice = 'apunta al centro un par de bolas y recupera sensaciones';
+      window.setTimeout(() => ui.toast(`🧑‍🏫 Coach: ${advice}`, 2200), 1200);
+    }
+  }
+
   // ---------- Golpes ----------
 
   private cpuCanHit(): boolean {
@@ -396,7 +445,8 @@ export class MatchMode {
     // El jugador de fondo está de cara: su derecha queda en -x
     const type = classifySwing(b.pos.y, side === 'player' ? dx : -dx, this.bounceCount, swing);
 
-    const quality = clamp(
+    // Calidad base: colocación respecto a la bola (buen timing = golpe preciso)
+    let quality = clamp(
       1 - (Math.abs(dx) / REACH_X) * 0.45 - (Math.abs(dz) / REACH_Z) * 0.45,
       0.15,
       1,
@@ -404,9 +454,41 @@ export class MatchMode {
     // <0 = golpeó antes de tiempo (bola lejos), >0 = tarde (bola encima)
     const timing = side === 'player' ? b.pos.z - (e.z - 0.5) : e.z + 0.5 - b.pos.z;
 
+    // La técnica del gesto real modifica el gameplay (solo con cámara)
+    let speedMul = 1;
+    if (swing.form) {
+      // Mala postura → más probabilidad de error (golpe más impreciso)
+      quality = clamp(quality * (0.72 + 0.28 * swing.form.posture), 0.1, 1);
+      // Potencia del gesto → velocidad de bola (arriesgar tiene premio y riesgo)
+      speedMul = 0.85 + 0.35 * swing.power;
+      // Punto de impacto fuera del rango natural → bola floja e imprecisa
+      if (swing.form.extension !== null) {
+        const [lo, hi] = isOverheadShot(type) ? [0.7, 2.0] : [0.85, 1.8];
+        if (swing.form.extension < lo || swing.form.extension > hi) {
+          quality = clamp(quality - 0.18, 0.1, 1);
+          speedMul *= 0.8;
+        }
+      }
+    }
+
+    if (side === 'player') {
+      // Confianza: en racha el golpe sale más fino; hundido, más errático
+      quality = clamp(quality + (this.confidence - 0.5) * 0.16, 0.1, 1);
+      this.lastPlayerForm = swing.form ?? null;
+      this.lastPlayerTiming = timing;
+      if (quality > 0.7) {
+        this.goodRun++;
+        if (this.goodRun === 3) ui.toast('🔥 ¡En racha!', 900);
+        ui.setFire(this.goodRun);
+      } else {
+        this.goodRun = 0;
+        ui.setFire(0);
+      }
+    }
+
     const aim = this.aimFor(type, swing.dir);
     if (side === 'cpu') aim.z = COURT.length - aim.z; // apunta al campo del jugador cercano
-    this.executeHit(side, type, quality, aim, timing);
+    this.executeHit(side, type, quality, aim, timing, speedMul);
   }
 
   /** Objetivo del golpe según su tipo (z bajo = profundo en campo CPU). */
@@ -443,9 +525,15 @@ export class MatchMode {
     quality: number,
     aim: { x: number; z: number },
     timing: number,
+    speedMul = 1,
   ): void {
     const entity = side === 'player' ? this.player : this.cpu;
     this.ball.vel = computeShotVelocity(this.ball.pos, aim, type, quality);
+    // Potencia real del gesto: bola más rápida (o floja) manteniendo el arco.
+    // <1 puede quedarse en la red; >1 puede irse larga: riesgo real.
+    const m = clamp(speedMul, 0.78, 1.18);
+    this.ball.vel.x *= m;
+    this.ball.vel.z *= m;
     // La víbora sale con efecto: curva en el aire y escupe en el bote
     this.ball.spin =
       type === 'vibora' ? Math.sign(this.ball.vel.x || 1) * SHOT_PARAMS.vibora.spin : 0;

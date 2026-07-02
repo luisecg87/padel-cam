@@ -34,8 +34,10 @@
       <h1>🎾 Pádel Cam</h1>
       <p class="tagline">Juega pádel con tu cuerpo, desde el navegador</p>
 
-      <!-- Entrenamiento del día: racha + drill sugerido por el coach -->
+      <!-- Entrenamiento del día: nivel + racha + drill sugerido por el coach -->
       <div id="coachCard" class="coach-card" hidden>
+        <div id="coachLevel" class="coach-level"></div>
+        <div id="coachXpBar" class="coach-xpbar"><div id="coachXpFill"></div></div>
         <div id="coachStreak" class="coach-streak"></div>
         <div id="coachTip" class="coach-tip"></div>
         <button class="opt" id="btnCoachTrain" hidden>🎯 Entrenar esto ahora</button>
@@ -72,12 +74,13 @@
       </div>
 
       <div class="main-buttons">
-        <button class="big" id="btnTraining">🎥 Entrenamiento técnico</button>
-        <button class="big secondary" id="btnPractice">🎯 Práctica con bola virtual</button>
-        <button class="big secondary" id="btnMatch">🎾 Partido vs CPU</button>
+        <button class="big" id="btnTraining">🎓 Entrenamiento técnico</button>
+        <button class="big" id="btnChallenges">🎯 Desafíos</button>
+        <button class="big" id="btnMatch">🏆 Partido vs IA</button>
         <button class="big secondary" id="btnTournament">🏟️ Torneo</button>
         <button class="big secondary" id="btnOnline">🌐 Online 1 vs 1</button>
-        <button class="big secondary" id="btnProgress">📈 Mi progreso</button>
+        <button class="big secondary" id="btnPractice">🎾 Práctica libre</button>
+        <button class="big secondary" id="btnProgress">📈 Mi progresión</button>
       </div>
 
       <p class="hint" id="menuHint"></p>
@@ -107,6 +110,7 @@
       <div id="toast"></div>
       <div id="drillHud"></div>
       <div id="replayBadge">📺 REPETICIÓN</div>
+      <div id="fireChip"></div>
       <button id="btnQuit" title="Salir">✕</button>
     </div>
 
@@ -121,6 +125,28 @@
         <button class="big" id="btnAgain">Jugar otra vez</button>
         <button class="link" id="btnReportProgress">Ver mi progreso</button>
         <button class="link" id="btnReportMenu">Volver al menú</button>
+      </div>
+    </div>
+
+    <!-- Desafíos jugables -->
+    <div class="screen" id="challenges">
+      <h2>🎯 Desafíos</h2>
+      <p class="hint">Tu gesto real controla el golpe: el timing da precisión, la potencia da velocidad y la mala postura penaliza. Consigue las 3 estrellas.</p>
+      <div id="challengeList" class="progress-list"></div>
+      <button class="link" id="btnChallengesBack">Volver al menú</button>
+    </div>
+
+    <!-- Resultado de desafío -->
+    <div class="screen" id="challengeEnd">
+      <p class="ts-kicker" id="ceName">DESAFÍO</p>
+      <div class="ce-stars" id="ceStars">☆☆☆</div>
+      <div class="ce-score"><span id="ceScore">0</span><span class="lbl" id="ceUnit">pts</span></div>
+      <p class="hint" id="ceRecord"></p>
+      <p class="ce-xp" id="ceXp"></p>
+      <div class="main-buttons">
+        <button class="big" id="btnChallengeAgain">Reintentar</button>
+        <button class="link" id="btnChallengeList">Otros desafíos</button>
+        <button class="link" id="btnChallengeMenu">Volver al menú</button>
       </div>
     </div>
 

@@ -1,4 +1,6 @@
 import { LM, PoseTracker, drawPreview } from './pose';
+import { readBody } from '../training/metrics';
+import type { Level } from '../training/metrics';
 import { clamp } from '../types';
 import type { ControlAdapter, MoveIntent, SwingEvent } from '../ui/input';
 
@@ -107,7 +109,16 @@ export class CameraControl implements ControlAdapter {
         const dir: -1 | 0 | 1 = vxBw > 3 ? 1 : vxBw < -3 ? -1 : 0;
         // Fuerza del gesto: brazo lento arriba = bandeja, latigazo = remate
         const power = clamp((speedBw - SWING_SPEED_BW) / 9, 0, 1);
-        this.swings.push({ dir, overhead, power });
+        // Forma técnica en el momento del golpe: alimenta el gameplay
+        const body = readBody(frame, 'forehand');
+        const lvl = (l: Level): number => (l === 'good' ? 1 : l === 'warn' ? 0.7 : 0.4);
+        const form = body
+          ? {
+              posture: (lvl(body.stance.level) + lvl(body.knees.level) + lvl(body.balance.level)) / 3,
+              extension: Math.hypot(sample.x - body.hipCenter.x, sample.y - body.hipCenter.y) / bw,
+            }
+          : { posture: 0.75, extension: null };
+        this.swings.push({ dir, overhead, power, form });
         this.history.L = [];
         this.history.R = [];
         break;
