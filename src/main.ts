@@ -1,4 +1,6 @@
 import { Renderer } from './game/render';
+import type { GameRenderer } from './game/renderers/GameRenderer';
+import { ThreeRenderer } from './game/renderers/threeRenderer';
 import { MatchMode } from './game/match';
 import { PracticeMode } from './modes/practice';
 import { Ball } from './game/ball';
@@ -41,7 +43,13 @@ const trainCanvas = document.querySelector<HTMLCanvasElement>('#trainCanvas')!;
 const video = document.querySelector<HTMLVideoElement>('#cam')!;
 const preview = document.querySelector<HTMLCanvasElement>('#camPreview')!;
 
-const renderer = new Renderer(canvas);
+// Spike técnico: ?renderer=three activa el renderer WebGL/Three.js en vez
+// del canvas 2D. Ambos implementan el mismo contrato (GameRenderer), así
+// que el resto del juego no sabe (ni le importa) cuál está activo. Sin
+// query param, o con cualquier otro valor, se usa el canvas de siempre.
+const rendererParam = new URLSearchParams(location.search).get('renderer');
+const renderer: GameRenderer =
+  rendererParam === 'three' ? new ThreeRenderer(canvas) : new Renderer(canvas);
 ui.init();
 
 let currentMode: MatchMode | PracticeMode | ChallengeMode | null = null;

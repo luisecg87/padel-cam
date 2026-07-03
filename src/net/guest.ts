@@ -1,11 +1,11 @@
 import { Ball } from '../game/ball';
 import { COURT } from '../game/court';
 import { PlayerEntity } from '../game/player';
-import { Renderer } from '../game/render';
 import { sfx } from '../audio/sfx';
 import { ui } from '../ui/screens';
 import { buildInputMsg, OnlineSession } from './online';
 import type { HudState } from './online';
+import type { GameRenderer } from '../game/renderers/GameRenderer';
 import type { ControlAdapter } from '../ui/input';
 import type { ShotType } from '../types';
 
@@ -13,7 +13,7 @@ import type { ShotType } from '../types';
 // el estado recibido con el mundo espejado (el invitado siempre se ve abajo).
 
 interface GuestOptions {
-  renderer: Renderer;
+  renderer: GameRenderer;
   control: ControlAdapter;
   session: OnlineSession;
   onEnd(title: string, games: string): void;

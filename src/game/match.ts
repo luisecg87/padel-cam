@@ -3,7 +3,6 @@ import { COURT, inServiceBox, sideOfZ } from './court';
 import { PlayerEntity, REACH_X, REACH_Z } from './player';
 import { CpuAi } from './ai';
 import { Score } from './scoring';
-import { Renderer } from './render';
 import { classifySwing, computeShotVelocity, SHOT_PARAMS } from './shots';
 import { MatchLogger } from '../analysis/logger';
 import { sfx } from '../audio/sfx';
@@ -11,6 +10,7 @@ import { ui } from '../ui/screens';
 import { clamp, isOverheadShot, opponent } from '../types';
 import type { SwingForm } from '../ui/input';
 import { CPU_PALETTE } from './render';
+import type { GameRenderer } from './renderers/GameRenderer';
 import type { Rival } from '../modes/tournament';
 import type { ControlAdapter, SwingEvent } from '../ui/input';
 import type { ControlMode, Difficulty, Side, ShotType } from '../types';
@@ -18,7 +18,7 @@ import type { ControlMode, Difficulty, Side, ShotType } from '../types';
 type MatchState = 'preServe' | 'rally' | 'pointOver' | 'replay' | 'done';
 
 export interface MatchOptions {
-  renderer: Renderer;
+  renderer: GameRenderer;
   control: ControlAdapter;
   controlMode: ControlMode;
   difficulty: Difficulty;

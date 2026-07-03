@@ -1,20 +1,20 @@
 import { Ball } from '../game/ball';
 import { COURT, sideOfZ } from '../game/court';
 import { PlayerEntity, REACH_X, REACH_Z } from '../game/player';
-import { Renderer } from '../game/render';
 import { classifySwing, computeShotVelocity, SHOT_PARAMS } from '../game/shots';
 import { GRAVITY, BALL_RADIUS } from '../game/ball';
 import { sfx } from '../audio/sfx';
 import { ui } from '../ui/screens';
 import { clamp, SHOT_ARTICLES, SHOT_NAMES } from '../types';
 import type { Report } from '../analysis/coach';
+import type { GameRenderer } from '../game/renderers/GameRenderer';
 import type { ControlAdapter, SwingEvent } from '../ui/input';
 import type { ControlMode, DrillType, ShotType } from '../types';
 
 const N_BALLS = 10;
 
 export interface PracticeOptions {
-  renderer: Renderer;
+  renderer: GameRenderer;
   control: ControlAdapter;
   controlMode: ControlMode;
   drill: DrillType;

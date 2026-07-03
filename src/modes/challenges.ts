@@ -1,11 +1,11 @@
 import { Ball } from '../game/ball';
 import { COURT, sideOfZ } from '../game/court';
 import { PlayerEntity, REACH_X, REACH_Z } from '../game/player';
-import { Renderer } from '../game/render';
 import { classifySwing, computeShotVelocity, SHOT_PARAMS } from '../game/shots';
 import { sfx } from '../audio/sfx';
 import { ui } from '../ui/screens';
 import { clamp } from '../types';
+import type { GameRenderer } from '../game/renderers/GameRenderer';
 import type { ControlAdapter, SwingEvent } from '../ui/input';
 import type { ControlMode, ShotType } from '../types';
 
@@ -68,7 +68,7 @@ const DIANA_ZONES: Zone[] = [
 const DIANA_BALLS = 12;
 
 export interface ChallengeOptions {
-  renderer: Renderer;
+  renderer: GameRenderer;
   control: ControlAdapter;
   controlMode: ControlMode;
   def: ChallengeDef;

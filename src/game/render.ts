@@ -3,6 +3,7 @@ import { COURT } from './court';
 import { PlayerEntity } from './player';
 import { clamp, isOverheadShot, lerp } from '../types';
 import type { Vec3 } from '../types';
+import type { GameRenderer } from './renderers/GameRenderer';
 
 // ============================================================================
 // Lenguaje visual: ARCADE DEPORTIVO 2.5D. Formas grandes, siluetas claras,
@@ -27,7 +28,7 @@ export interface Palette {
   hair: string;
 }
 
-const PLAYER_PALETTE: Palette = {
+export const PLAYER_PALETTE: Palette = {
   shirt: '#2fd6b3',
   shirtDark: '#118b72',
   shorts: '#14293e',
@@ -80,7 +81,7 @@ interface Particle {
   size: number;
 }
 
-export class Renderer {
+export class Renderer implements GameRenderer {
   canvas: HTMLCanvasElement;
   ctx: CanvasRenderingContext2D;
   W = 0;
