@@ -1,7 +1,7 @@
 import { Ball, BALL_RADIUS } from './ball';
 import { COURT } from './court';
 import { PlayerEntity } from './player';
-import { isOverheadShot } from '../types';
+import { clamp, isOverheadShot, lerp } from '../types';
 import type { Vec3 } from '../types';
 
 // ============================================================================
@@ -59,6 +59,16 @@ function shade(hex: string, k: number): string {
   return `rgb(${r},${g},${b})`;
 }
 
+/**
+ * Estado de pose suavizado de un avatar (jugador cercano o rival lejano):
+ * blend 0 = reposo (pala delante del cuerpo), 1 = preparado/en golpe;
+ * side +1 = lado de derecha (forehand), -1 = lado de revés (backhand).
+ */
+interface AvatarPose {
+  blend: number;
+  side: number;
+}
+
 interface Particle {
   kind: 'dot' | 'ring';
   x: number; y: number; z: number;
@@ -92,6 +102,12 @@ export class Renderer {
     a: 0.15 + Math.random() * 0.35,
   }));
   private vignette: CanvasGradient | null = null;
+
+  // Sistema de poses del avatar: reposo <-> preparación <-> golpe <-> vuelta,
+  // suavizado con interpolación exponencial (sin estado de gameplay, solo
+  // visual). Un estado independiente por avatar (cercano/lejano).
+  private poseNear: AvatarPose = { blend: 0, side: 1 };
+  private poseFar: AvatarPose = { blend: 0, side: 1 };
 
   constructor(canvas: HTMLCanvasElement) {
     this.canvas = canvas;
@@ -195,12 +211,12 @@ export class Renderer {
     this.drawBackground(dt, now);
     this.drawCourt(now);
     if (showBall) this.drawLandingMarker(ball, now);
-    this.drawAvatar(cpu, this.cpuPalette, true);
+    this.drawAvatar(cpu, this.cpuPalette, true, ball, dt);
     if (showBall && ball.pos.z <= COURT.netZ) this.drawBall(ball);
     this.drawNet();
     if (showBall && ball.pos.z > COURT.netZ) this.drawBall(ball);
     this.drawParticles(dt);
-    this.drawAvatar(player, PLAYER_PALETTE, false);
+    this.drawAvatar(player, PLAYER_PALETTE, false, ball, dt);
     ctx.restore();
 
     if (this.vignette) {
@@ -812,7 +828,25 @@ export class Renderer {
     }
   }
 
-  private drawAvatar(p: PlayerEntity, pal: Palette, facingCamera: boolean): void {
+  /**
+   * Deriva hacia qué lado y con cuánta antelación debería prepararse el
+   * jugador a partir de la posición/velocidad real de la bola (solo
+   * lectura visual, no toca ningún estado de gameplay).
+   */
+  private anticipate(p: PlayerEntity, ball: Ball, facingCamera: boolean): { blend: number; side: number } {
+    if (!ball.active) return { blend: 0, side: 0 };
+    // ¿La bola viaja hacia el lado de este jugador?
+    const incoming = facingCamera ? ball.vel.z < -0.4 : ball.vel.z > 0.4;
+    if (!incoming) return { blend: 0, side: 0 };
+    const dz = Math.abs(ball.pos.z - p.z);
+    const blend = clamp(1 - dz / 10, 0, 0.85);
+    // Misma convención derecha/revés que usa classifySwing en match.ts
+    const dx = ball.pos.x - p.x;
+    const side = (facingCamera ? -dx : dx) >= 0 ? 1 : -1;
+    return { blend, side };
+  }
+
+  private drawAvatar(p: PlayerEntity, pal: Palette, facingCamera: boolean, ball: Ball, dt: number): void {
     const ctx = this.ctx;
     const base = this.project(p.x, 0, p.z);
     // Escala arcade: el personaje manda en pantalla
@@ -823,6 +857,25 @@ export class Renderer {
     const swingDir =
       swinging && (p.swingType === 'backhand' || p.swingType === 'volleyBh') ? -1 : 1;
     const dirScreen = swingDir * (facingCamera ? -1 : 1);
+
+    // ---- Sistema de poses: reposo <-> preparación <-> golpe <-> vuelta ----
+    // Un único valor continuo (blend) y un lado continuo (side) por avatar,
+    // suavizados con interpolación exponencial: nunca hay un salto brusco
+    // entre reposo (pala delante del cuerpo) y preparación/golpe (pala al
+    // lado o cruzada). Al terminar el golpe, blend queda alto y decae solo
+    // hacia reposo: esa caída ES la "recuperación".
+    const pose = facingCamera ? this.poseFar : this.poseNear;
+    const ease = Math.min(dt * 7, 1);
+    if (swinging) {
+      pose.blend += (1 - pose.blend) * ease;
+      pose.side += (swingDir - pose.side) * ease;
+    } else {
+      const ant = this.anticipate(p, ball, facingCamera);
+      pose.blend += (ant.blend - pose.blend) * ease;
+      if (ant.blend > 0.05) pose.side += (ant.side - pose.side) * ease;
+    }
+    const prepBlend = clamp(pose.blend, 0, 1); // 0 reposo -> 1 preparado/golpeando
+    const prepSide = clamp(pose.side, -1, 1); // -1 revés .. +1 derecha
 
     // Sombra grande y clara bajo los pies
     const gSh = ctx.createRadialGradient(cx, base.y, 0, cx, base.y, 0.55 * s);
@@ -841,15 +894,21 @@ export class Renderer {
     const headR = 0.155 * s;
     let lean = p.lean * (facingCamera ? -1 : 1);
     if (swinging) lean += swingK * 0.22 * dirScreen;
+    // Torso gira hacia el lado anticipado al prepararse (hombro acompaña)
+    else lean += prepBlend * 0.13 * prepSide * (facingCamera ? -1 : 1);
 
     const stride = Math.sin(p.runPhase) * 0.18 * s * p.moveAmount;
     const lungeF = swingK * 0.14 * s; // zancada del golpe
+    const prepLungeF = !swinging ? prepBlend * 0.06 * s : 0; // pierna de apoyo en preparación
+    // Lado de la pantalla que carga el peso: el del golpe real, o el anticipado
+    const activeDirScreen = swinging ? dirScreen : Math.sign(prepSide || 1) * (facingCamera ? -1 : 1);
 
     // ---- Piernas: muslo + gemelo con masa, rodilla flexionada ----
     const drawLeg = (side: -1 | 1, off: number): void => {
-      const isLunge = swinging && side === (dirScreen as -1 | 1);
+      const isLunge = side === activeDirScreen && (swinging || prepBlend > 0.15);
+      const lungeAmt = swinging ? lungeF : prepLungeF;
       const hx = cx + side * 0.12 * s;
-      const fx = cx + side * (0.2 * s + (isLunge ? lungeF : 0)) + off;
+      const fx = cx + side * (0.2 * s + (isLunge ? lungeAmt : 0)) + off;
       const fy = base.y - Math.abs(off) * 0.2;
       const kx = (hx + fx) / 2 + side * 0.05 * s;
       const ky = (hipY + fy) / 2 - 0.045 * s;
@@ -935,6 +994,8 @@ export class Renderer {
     else ctx.fillText('2', 0, -torsoH * 0.55);
 
     // ---- Brazo libre (dos segmentos) ----
+    // En reposo, la mano secundaria se acerca al cuello de la pala (grip a
+    // dos manos); al preparar/golpear se abre para dar equilibrio.
     const offSide = facingCamera ? 1 : -1;
     const armSway = -stride * 0.5;
     const fShoulder = { x: offSide * shW * 0.92, y: -torsoH + 0.06 * s };
@@ -942,7 +1003,16 @@ export class Renderer {
       x: offSide * (shW + 0.06 * s),
       y: -torsoH * 0.5 + swingK * 0.06 * s,
     };
-    const fHand = { x: offSide * (shW - 0.02 * s) + armSway - swingK * 0.08 * s * dirScreen, y: -0.12 * s };
+    const fBlend = swinging ? 1 : prepBlend;
+    const readyFHand = { x: offSide * shW * 0.3, y: -torsoH * 0.52 };
+    const activeFHand = {
+      x: offSide * (shW - 0.02 * s) + armSway - swingK * 0.08 * s * dirScreen,
+      y: -0.12 * s,
+    };
+    const fHand = {
+      x: lerp(readyFHand.x, activeFHand.x, fBlend),
+      y: lerp(readyFHand.y, activeFHand.y, fBlend),
+    };
     this.capsule(fShoulder.x, fShoulder.y, fElbow.x, fElbow.y, 0.105 * s, pal.shirt);
     this.capsule(fElbow.x, fElbow.y, fHand.x, fHand.y, 0.085 * s, pal.skin);
 
@@ -979,9 +1049,15 @@ export class Renderer {
       ctx.fill();
     }
 
-    // ---- Brazo de la pala: extendido y separado del cuerpo ----
+    // ---- Brazo de la pala: reposo (delante) <-> preparación <-> golpe ----
+    const armSide = facingCamera ? -1 : 1;
+    const shoulder = { x: armSide * shW * 0.95, y: -torsoH + 0.05 * s };
+    const armLen = (0.5 + swingK * 0.1) * s; // brazo extendido en el golpe
+
     let armAngle: number;
+    let hand: { x: number; y: number };
     if (swinging) {
+      // Golpe real: fórmula existente sin tocar (autoridad del gameplay)
       const t = p.swingT;
       if (p.swingType !== null && isOverheadShot(p.swingType)) {
         const range = p.swingType === 'bandeja' ? 0.85 : 1.15;
@@ -989,16 +1065,34 @@ export class Renderer {
       } else {
         armAngle = swingDir * (-2.2 + t * 3.4);
       }
+      hand = {
+        x: shoulder.x + Math.sin(armAngle) * armLen * armSide,
+        y: shoulder.y + Math.cos(armAngle) * armLen * 0.75 + 0.05 * s,
+      };
     } else {
-      armAngle = 1.05 + armSway / Math.max(s, 1);
+      // Reposo: la pala cuelga casi centrada, delante del pecho (READY_ANGLE).
+      // Preparación: se lleva hacia atrás en el lado anticipado (derecha) o
+      // cruza delante del cuerpo hacia el lado contrario (revés), según el
+      // lado continuo `prepSide` (+1 derecha .. -1 revés).
+      const READY_ANGLE = 0.3;
+      const PREP_ANGLE = 1.05;
+      armAngle = lerp(READY_ANGLE, PREP_ANGLE, prepBlend) * (prepBlend > 0 ? prepSide : 1);
+      const readyHand = {
+        x: armSide * shW * 0.32, // casi centrada
+        y: -torsoH * 0.58, // a la altura del pecho: delante del cuerpo
+      };
+      const prepHand = {
+        x: shoulder.x + Math.sin(armAngle) * armLen * armSide,
+        y: shoulder.y + Math.cos(armAngle) * armLen * 0.75 + 0.05 * s,
+      };
+      // Revés: cruza delante del cuerpo hacia el lado contrario
+      const crossPull = Math.max(0, -prepSide) * prepBlend * armLen * 0.85;
+      prepHand.x -= crossPull;
+      hand = {
+        x: lerp(readyHand.x, prepHand.x, prepBlend),
+        y: lerp(readyHand.y, prepHand.y, prepBlend),
+      };
     }
-    const armSide = facingCamera ? -1 : 1;
-    const shoulder = { x: armSide * shW * 0.95, y: -torsoH + 0.05 * s };
-    const armLen = (0.5 + swingK * 0.1) * s; // brazo extendido en el golpe
-    const hand = {
-      x: shoulder.x + Math.sin(armAngle) * armLen * armSide,
-      y: shoulder.y + Math.cos(armAngle) * armLen * 0.75 + 0.05 * s,
-    };
     const mid = { x: (shoulder.x + hand.x) / 2, y: (shoulder.y + hand.y) / 2 };
     const elbow = {
       x: mid.x + Math.cos(armAngle) * 0.08 * s * armSide * (1 - swingK * 0.7),
