@@ -1,6 +1,5 @@
 import { Renderer } from './game/render';
 import type { GameRenderer } from './game/renderers/GameRenderer';
-import { ThreeRenderer } from './game/renderers/threeRenderer';
 import { MatchMode } from './game/match';
 import { PracticeMode } from './modes/practice';
 import { Ball } from './game/ball';
@@ -47,9 +46,14 @@ const preview = document.querySelector<HTMLCanvasElement>('#camPreview')!;
 // del canvas 2D. Ambos implementan el mismo contrato (GameRenderer), así
 // que el resto del juego no sabe (ni le importa) cuál está activo. Sin
 // query param, o con cualquier otro valor, se usa el canvas de siempre.
+// three.js se carga con import() dinámico SOLO cuando se pide ese
+// renderer, así el bundle inicial del canvas (el que recibe todo el
+// mundo por defecto) no crece ni un byte por el spike.
 const rendererParam = new URLSearchParams(location.search).get('renderer');
 const renderer: GameRenderer =
-  rendererParam === 'three' ? new ThreeRenderer(canvas) : new Renderer(canvas);
+  rendererParam === 'three'
+    ? new (await import('./game/renderers/threeRenderer')).ThreeRenderer(canvas)
+    : new Renderer(canvas);
 ui.init();
 
 let currentMode: MatchMode | PracticeMode | ChallengeMode | null = null;

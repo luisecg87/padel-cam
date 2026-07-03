@@ -20,6 +20,8 @@ import { isOverheadShot } from '../../types';
 // ============================================================================
 
 const MAX_PARTICLES = 60;
+/** Vector temporal reutilizado para lecturas puntuales de posición mundial (evita asignar por fotograma). */
+const _tmpVec3 = new THREE.Vector3();
 
 interface Particle {
   mesh: THREE.Mesh;
@@ -36,6 +38,51 @@ interface AvatarRig {
   rightLeg: THREE.Group;
   paddleHead: THREE.Mesh;
   bodyMats: THREE.MeshStandardMaterial[];
+  impactFlash: THREE.Sprite;
+  ghosts: THREE.Sprite[];
+  groundShadow: THREE.Mesh;
+  wasContact: boolean;
+}
+
+/**
+ * Overlay DOM ligero con FPS / frame time en vivo. Solo se crea con
+ * ?renderer=three&debug=perf — cero coste si no se pide explícitamente.
+ */
+class PerfHud {
+  private el: HTMLDivElement;
+  private samples: number[] = [];
+  private readonly windowSize = 90;
+
+  constructor(rendererLabel: string) {
+    this.el = document.createElement('div');
+    this.el.style.cssText =
+      'position:fixed;top:8px;left:8px;z-index:99999;background:rgba(4,10,20,0.78);' +
+      'color:#7CFC9B;font:12px/1.5 "SFMono-Regular",Consolas,monospace;padding:8px 11px;' +
+      'border-radius:8px;pointer-events:none;white-space:pre;letter-spacing:0.02em;';
+    this.el.textContent = `Renderer: ${rendererLabel}\nFPS: —`;
+    document.body.appendChild(this.el);
+  }
+
+  sample(dtSeconds: number): void {
+    const ms = dtSeconds * 1000;
+    this.samples.push(ms);
+    if (this.samples.length > this.windowSize) this.samples.shift();
+    const n = this.samples.length;
+    const last = this.samples[n - 1];
+    const avgMs = this.samples.reduce((a, b) => a + b, 0) / n;
+    const worstMs = Math.max(...this.samples);
+    const instFps = 1000 / Math.max(last, 0.1);
+    const avgFps = 1000 / Math.max(avgMs, 0.1);
+    const minFps = 1000 / Math.max(worstMs, 0.1);
+    this.el.textContent =
+      `Renderer: THREE.js (WebGL)\n` +
+      `FPS: ${instFps.toFixed(0)}  (avg ${avgFps.toFixed(0)} · min≈${minFps.toFixed(0)})\n` +
+      `Frame: ${last.toFixed(1)}ms  (avg ${avgMs.toFixed(1)}ms)`;
+  }
+
+  dispose(): void {
+    this.el.remove();
+  }
 }
 
 export class ThreeRenderer implements GameRenderer {
@@ -67,6 +114,8 @@ export class ThreeRenderer implements GameRenderer {
   private zoneGroup = new THREE.Group();
   private zonesCache = '';
 
+  private perfHud: PerfHud | null = null;
+
   constructor(canvas: HTMLCanvasElement) {
     this.canvas = canvas;
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
@@ -78,6 +127,10 @@ export class ThreeRenderer implements GameRenderer {
     this.scene.fog = new THREE.Fog(0x030711, 18, 42);
 
     this.camera = new THREE.PerspectiveCamera(55, 1, 0.1, 100);
+
+    if (new URLSearchParams(location.search).get('debug') === 'perf') {
+      this.perfHud = new PerfHud('THREE.js (WebGL)');
+    }
 
     this.buildCourt();
     this.buildLights();
@@ -141,7 +194,8 @@ export class ThreeRenderer implements GameRenderer {
   }
 
   draw(ball: Ball, player: PlayerEntity, cpu: PlayerEntity, showBall: boolean): void {
-    const dt = Math.min(this.clock.getDelta(), 0.05);
+    const rawDt = this.clock.getDelta();
+    const dt = Math.min(rawDt, 0.05);
     const now = this.clock.elapsedTime;
 
     this.updateCamera(player, dt);
@@ -153,6 +207,10 @@ export class ThreeRenderer implements GameRenderer {
     this.updateLights(dt, now);
 
     this.renderer.render(this.scene, this.camera);
+
+    // Frame time real (sin recortar) para que el HUD refleje bajones de
+    // rendimiento reales, no el dt ya suavizado que usa la animación.
+    this.perfHud?.sample(rawDt);
   }
 
   // --------------------------------------------------------------------
@@ -261,19 +319,24 @@ export class ThreeRenderer implements GameRenderer {
     }
   }
 
-  /** Textura de degradado radial (glow suave) generada por canvas, sin assets externos. */
-  private static makeGlowTexture(): THREE.Texture {
-    const c = document.createElement('canvas');
-    c.width = 64;
-    c.height = 64;
-    const ctx = c.getContext('2d')!;
-    const g = ctx.createRadialGradient(32, 32, 0, 32, 32, 32);
-    g.addColorStop(0, 'rgba(255,246,216,0.9)');
-    g.addColorStop(0.4, 'rgba(255,242,192,0.4)');
-    g.addColorStop(1, 'rgba(255,242,192,0)');
-    ctx.fillStyle = g;
-    ctx.fillRect(0, 0, 64, 64);
-    return new THREE.CanvasTexture(c);
+  private static _glowTex: THREE.Texture | null = null;
+  /** Textura de degradado radial (glow suave) generada por canvas, sin
+   *  assets externos, compartida por focos/destello de impacto/estela. */
+  private static get glowTex(): THREE.Texture {
+    if (!ThreeRenderer._glowTex) {
+      const c = document.createElement('canvas');
+      c.width = 64;
+      c.height = 64;
+      const ctx = c.getContext('2d')!;
+      const g = ctx.createRadialGradient(32, 32, 0, 32, 32, 32);
+      g.addColorStop(0, 'rgba(255,246,216,0.95)');
+      g.addColorStop(0.4, 'rgba(255,242,192,0.45)');
+      g.addColorStop(1, 'rgba(255,242,192,0)');
+      ctx.fillStyle = g;
+      ctx.fillRect(0, 0, 64, 64);
+      ThreeRenderer._glowTex = new THREE.CanvasTexture(c);
+    }
+    return ThreeRenderer._glowTex;
   }
 
   private buildLights(): void {
@@ -292,7 +355,7 @@ export class ThreeRenderer implements GameRenderer {
     // pero solo 2 SpotLight dinámicos reales (coste por fragmento) — el
     // relleno cenital ya cubre el resto de la pista. Menos luces dinámicas
     // = más margen en GPUs móviles modestas.
-    const glowTex = ThreeRenderer.makeGlowTexture();
+    const glowTex = ThreeRenderer.glowTex;
     const lightX = [-6.2, 6.2];
     const lightZ = [4, 15];
     for (const lx of lightX) {
@@ -328,22 +391,26 @@ export class ThreeRenderer implements GameRenderer {
   private buildBall(): { mesh: THREE.Mesh; glow: THREE.PointLight; shadow: THREE.Mesh } {
     const mesh = new THREE.Mesh(
       new THREE.SphereGeometry(0.12, 16, 16),
-      new THREE.MeshStandardMaterial({ color: 0xe4ec3a, emissive: 0xc7d61a, emissiveIntensity: 0.55, roughness: 0.5 }),
+      new THREE.MeshStandardMaterial({ color: 0xe4ec3a, emissive: 0xc7d61a, emissiveIntensity: 0.75, roughness: 0.4 }),
     );
+    // Sobre-escala puramente visual (igual que hace el canvas): la bola
+    // física sigue teniendo el radio real del juego, solo se DIBUJA más
+    // grande para que se lea con claridad en pantallas pequeñas.
+    mesh.scale.setScalar(1.55);
     this.scene.add(mesh);
-    const glow = new THREE.PointLight(0xe8ee6a, 1.1, 4, 2);
+    const glow = new THREE.PointLight(0xe8ee6a, 1.6, 5, 2);
     mesh.add(glow);
     const shadow = new THREE.Mesh(
-      new THREE.CircleGeometry(0.2, 16),
-      new THREE.MeshBasicMaterial({ color: 0x000000, transparent: true, opacity: 0.35 }),
+      new THREE.CircleGeometry(0.22, 16),
+      new THREE.MeshBasicMaterial({ color: 0x000000, transparent: true, opacity: 0.4 }),
     );
     shadow.rotation.x = -Math.PI / 2;
     shadow.position.y = 0.01;
     this.scene.add(shadow);
     for (let i = 0; i < 6; i++) {
       const t = new THREE.Mesh(
-        new THREE.SphereGeometry(0.09, 8, 8),
-        new THREE.MeshBasicMaterial({ color: 0xdee628, transparent: true, opacity: 0 }),
+        new THREE.SphereGeometry(0.1, 8, 8),
+        new THREE.MeshBasicMaterial({ color: 0xf1f77a, transparent: true, opacity: 0 }),
       );
       this.scene.add(t);
       this.trailMeshes.push(t);
@@ -358,7 +425,13 @@ export class ThreeRenderer implements GameRenderer {
   private buildAvatar(pal: Palette): AvatarRig {
     const group = new THREE.Group();
     const skinMat = new THREE.MeshStandardMaterial({ color: pal.skin, roughness: 0.7 });
-    const shirtMat = new THREE.MeshStandardMaterial({ color: pal.shirt, roughness: 0.6 });
+    // Emisión sutil del color de la camiseta: ayuda a que el torso "salga"
+    // de la pista/fondo oscuro en pantallas pequeñas sin depender solo de
+    // la luz ambiente (contraste jugador/pista/fondo pedido en el spike 2).
+    const shirtMat = new THREE.MeshStandardMaterial({
+      color: pal.shirt, roughness: 0.55,
+      emissive: new THREE.Color(pal.shirt), emissiveIntensity: 0.18,
+    });
     const shortsMat = new THREE.MeshStandardMaterial({ color: pal.shorts, roughness: 0.7 });
     const hairMat = new THREE.MeshStandardMaterial({ color: pal.hair, roughness: 0.8 });
 
@@ -423,21 +496,61 @@ export class ThreeRenderer implements GameRenderer {
     paddleArm.add(paddleArmMesh);
     group.add(paddleArm);
 
-    // Pala: mango + cara ovalada, al final del brazo
-    const paddleHead = new THREE.Mesh(
-      new THREE.CylinderGeometry(0.1, 0.1, 0.025, 16),
-      new THREE.MeshStandardMaterial({ color: 0xe8823f, roughness: 0.4 }),
+    // Pala: esfera achatada en vez de disco fino. Un disco (cilindro muy
+    // delgado) se vuelve casi invisible cuando el brazo lo pone de canto
+    // a cámara (justo lo que pasa a media parte del swing) — un volumen
+    // esférico aplastado, en cambio, SIEMPRE muestra una sección de color
+    // sea cual sea el ángulo, así que no "desaparece" durante el golpe.
+    const paddleRim = new THREE.Mesh(
+      new THREE.SphereGeometry(0.2, 16, 12),
+      new THREE.MeshStandardMaterial({ color: 0x14202f, roughness: 0.6 }),
     );
-    paddleHead.rotation.x = Math.PI / 2;
-    paddleHead.position.set(0, -0.42, 0.02);
+    paddleRim.scale.set(1, 1, 0.4);
+    paddleRim.position.set(0, -0.44, 0.005);
+    const paddleHead = new THREE.Mesh(
+      new THREE.SphereGeometry(0.16, 16, 12),
+      new THREE.MeshStandardMaterial({ color: 0xff9a4d, emissive: 0xb44f10, emissiveIntensity: 0.9, roughness: 0.3 }),
+    );
+    paddleHead.scale.set(1, 1, 0.45);
+    paddleHead.position.set(0, -0.44, 0.02);
     const handle = new THREE.Mesh(
-      new THREE.CylinderGeometry(0.022, 0.022, 0.14, 8),
+      new THREE.CylinderGeometry(0.024, 0.024, 0.16, 8),
       new THREE.MeshStandardMaterial({ color: 0x1c242f }),
     );
     handle.position.set(0, -0.34, 0);
-    paddleArm.add(handle, paddleHead);
+    paddleArm.add(handle, paddleRim, paddleHead);
 
     group.add(paddleArm);
+
+    // Destello de impacto: sprite oculto que se enciende justo al golpear
+    // (mismo criterio que el canvas: swingT cerca de 0 durante el golpe).
+    const impactFlash = new THREE.Sprite(new THREE.SpriteMaterial({
+      map: ThreeRenderer.glowTex, color: 0xffffff, transparent: true, opacity: 0, depthWrite: false,
+    }));
+    impactFlash.scale.set(0.01, 0.01, 1);
+    group.add(impactFlash);
+
+    // Estela de la pala durante el golpe: 2 "fantasmas" que van dejando
+    // rastro de las últimas posiciones — da lectura de dirección/velocidad
+    // del swing incluso con una animación de brazo simple.
+    const ghosts = [0, 1].map(() => {
+      const g = new THREE.Sprite(new THREE.SpriteMaterial({
+        map: ThreeRenderer.glowTex, color: 0xffb066, transparent: true, opacity: 0, depthWrite: false,
+      }));
+      g.scale.set(0.001, 0.001, 1);
+      this.scene.add(g);
+      return g;
+    });
+
+    // Sombra de contacto bajo los pies: separa la silueta del jugador de
+    // la pista (grounding), igual función que la sombra de la bola.
+    const groundShadow = new THREE.Mesh(
+      new THREE.CircleGeometry(0.34, 20),
+      new THREE.MeshBasicMaterial({ color: 0x000000, transparent: true, opacity: 0.32 }),
+    );
+    groundShadow.rotation.x = -Math.PI / 2;
+    groundShadow.position.y = 0.01;
+    this.scene.add(groundShadow);
 
     return {
       group,
@@ -447,6 +560,10 @@ export class ThreeRenderer implements GameRenderer {
       rightLeg,
       paddleHead,
       bodyMats: [skinMat, shirtMat, shortsMat, hairMat],
+      impactFlash,
+      ghosts,
+      groundShadow,
+      wasContact: false,
     };
   }
 
@@ -461,36 +578,85 @@ export class ThreeRenderer implements GameRenderer {
     const t = swinging ? Math.min(p.swingT, 1) : 0;
     const swingK = swinging ? Math.sin(t * Math.PI) : 0;
 
-    // Giro de hombros: sutil en preparación, más marcado en el golpe.
-    const turn = swinging ? swingK * 0.55 * swingDir : Math.sin(dt * 0) * 0; // placeholder, sin turn en reposo
+    // Giro de hombros: deliberadamente MODESTO. Con la cámara casi en el
+    // eje de espaldas del jugador, un giro de cuerpo grande termina
+    // apuntando el brazo de la pala hacia/desde la cámara (foreshortening)
+    // y lo hace desaparecer — por eso en la v1 del spike la pala "no se
+    // veía" durante el golpe. La lectura del golpe la da el brazo (abajo),
+    // no una rotación grande de todo el cuerpo.
+    const turn = swinging ? swingK * 0.22 * swingDir : 0;
     rig.group.rotation.y = baseFacing + turn * (isCpu ? -1 : 1);
 
     // Ligero balanceo de respiración/espera para que no parezca estático.
     const idleBob = Math.sin(performance.now() / 480 + (isCpu ? 2 : 0)) * 0.012;
     rig.group.position.y = idleBob;
+    rig.groundShadow.position.set(p.x, 0.01, p.z);
 
     // Piernas: flexión ligera fija (pose lista) + pequeño paso si se mueve.
     const moveSwing = Math.sin(p.runPhase) * 0.22 * p.moveAmount;
     rig.leftLeg.rotation.x = 0.08 + moveSwing;
     rig.rightLeg.rotation.x = 0.08 - moveSwing;
 
-    // Brazo de la pala: ángulo de reposo -> preparación/golpe.
-    let armAngle: number;
+    // Brazo de la pala — corrección clave del spike 2: el eje que barre
+    // ROTATION.X mueve el brazo en profundidad (hacia/desde cámara), que
+    // desde una cámara casi de espaldas se ve en escorzo y apenas se lee
+    // (esto era el bug de la v1: la pala "desaparecía" en pleno golpe).
+    // ROTATION.Z, en cambio, barre el brazo de lado a lado en pantalla:
+    // ese es el eje que de verdad se lee. Derecha/revés ahora usan
+    // rotation.z como arco principal (amplio, visible) y rotation.x solo
+    // para una inclinación hacia delante sutil. Los golpes altos siguen
+    // usando rotation.x porque ahí SÍ es el eje correcto (el brazo sube).
+    let lateralAngle = 0; // barrido principal (rotation.z): visible de lado a lado
+    let depthAngle = 0.4; // inclinación secundaria (rotation.x): sutil, hacia delante
     if (swinging && p.swingType !== null && isOverheadShot(p.swingType)) {
-      armAngle = -1.6 + t * 2.6; // golpes altos: brazo sube por encima
+      depthAngle = -1.7 + t * 3.1; // golpes altos: el brazo sube por encima (eje correcto: x)
+      lateralAngle = 0.15 * swingK * swingDir;
     } else if (swinging) {
-      armAngle = isBackhand ? -0.9 + t * 1.7 : 0.9 - t * 1.7;
+      // Derecha: preparación atrás del lado dominante -> extendida, cruzando
+      // ligeramente delante del cuerpo al terminar (arco amplio y lateral).
+      // Revés: mismo arco, con el signo invertido (empieza cruzado).
+      lateralAngle = isBackhand ? -1.3 + t * 2.0 : 1.3 - t * 2.0;
+      depthAngle = 0.15 + swingK * 0.35;
     } else {
-      armAngle = 0.4; // reposo: pala delante, brazo ligeramente adelantado
+      lateralAngle = 0.55; // reposo: pala delante, ligeramente hacia su lado
+      depthAngle = 0.35;
     }
-    rig.paddleArm.rotation.x = -armAngle;
-    // Sin giro extra hacia el centro en reposo: el brazo se separa del
-    // torso hacia su propio lado, así no se funde con el brazo libre.
-    rig.paddleArm.rotation.z = isBackhand && swinging ? 0.35 : -0.1;
+    rig.paddleArm.rotation.z = lateralAngle;
+    rig.paddleArm.rotation.x = -depthAngle;
 
-    // Contacto: la pala "destella" con un ligero aumento de escala.
-    const flash = swinging && p.swingT < 0.18 ? 1.25 : 1;
-    rig.paddleHead.scale.setScalar(flash);
+    // Contacto: la pala "destella" con un aumento de escala más marcado,
+    // más un flash de luz y una breve estela que dejan claro EL INSTANTE
+    // y LA DIRECCIÓN del golpe — la señal más legible en pantallas pequeñas.
+    const contact = swinging && p.swingT < 0.18;
+    rig.paddleHead.scale.setScalar(contact ? 1.4 : 1);
+
+    const paddleWorldPos = rig.paddleHead.getWorldPosition(_tmpVec3);
+    if (contact) {
+      const k = 1 - p.swingT / 0.18; // 1 en el instante del golpe -> 0 al terminar
+      rig.impactFlash.position.copy(paddleWorldPos);
+      rig.impactFlash.scale.setScalar(0.25 + k * 0.55);
+      (rig.impactFlash.material as THREE.SpriteMaterial).opacity = k * 0.9;
+    } else {
+      (rig.impactFlash.material as THREE.SpriteMaterial).opacity = 0;
+    }
+
+    // Estela de la pala: solo mientras dura el swing rápido (no en el
+    // reposo ni la preparación), para leer la trayectoria del golpe.
+    // Aproximación barata: cada fantasma es la posición actual de la pala
+    // desplazada un poco hacia el cuerpo (sin re-evaluar toda la
+    // jerarquía de nodos con un ángulo pasado), suficiente para una estela
+    // corta y legible sin coste extra de cómputo por fotograma.
+    if (swinging && t > 0.05 && t < 0.75) {
+      for (let i = 0; i < rig.ghosts.length; i++) {
+        const ghost = rig.ghosts[i];
+        const lag = (i + 1) * 0.16;
+        ghost.position.copy(paddleWorldPos).lerp(rig.group.position, lag);
+        ghost.scale.setScalar(0.16 - i * 0.04);
+        (ghost.material as THREE.SpriteMaterial).opacity = (1 - i * 0.4) * 0.32;
+      }
+    } else {
+      for (const ghost of rig.ghosts) (ghost.material as THREE.SpriteMaterial).opacity = 0;
+    }
   }
 
   // --------------------------------------------------------------------
