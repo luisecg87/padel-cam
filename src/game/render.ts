@@ -5,14 +5,18 @@ import { isOverheadShot } from '../types';
 import type { Vec3 } from '../types';
 
 // ============================================================================
-// Dirección visual: "noche de Premier Pádel" — retransmisión deportiva
-// nocturna. Luz fría cenital, pista con material, público a contraluz,
-// un solo acento de color (la bola lima). Cámara más baja para dar presencia
-// al jugador y profundidad a la pista.
+// Lenguaje visual: ARCADE DEPORTIVO 2.5D. Formas grandes, siluetas claras,
+// contraste fuerte y lectura móvil. Jerarquía: jugador cercano > bola > red >
+// líneas > rival > cristales > fondo. El fondo es una silueta de estadio,
+// no un decorado.
 // ============================================================================
 
-const CAM_Z = 26;
-const CAM_H = 4.4; // cámara más baja que antes: perspectiva más deportiva
+// Cámara visual: cerca y baja para que el jugador cercano tenga cuerpo.
+// (Solo proyección: las coordenadas lógicas del juego no cambian.)
+const CAM_Z = 24;
+const CAM_H = 3.6;
+
+const OUTLINE = '#0d1826';
 
 export interface Palette {
   shirt: string;
@@ -23,28 +27,36 @@ export interface Palette {
 }
 
 const PLAYER_PALETTE: Palette = {
-  shirt: '#25c9b0',
-  shirtDark: '#0f7d6d',
-  shorts: '#12293d',
-  skin: '#e9b98d',
+  shirt: '#2fd6b3',
+  shirtDark: '#118b72',
+  shorts: '#14293e',
+  skin: '#efc296',
   hair: '#3a2a1c',
 };
 
 export const CPU_PALETTE: Palette = {
-  shirt: '#f0764f',
-  shirtDark: '#a63d22',
-  shorts: '#26161f',
-  skin: '#f0c9a0',
+  shirt: '#f2784e',
+  shirtDark: '#b04424',
+  shorts: '#2a1a22',
+  skin: '#f3cda2',
   hair: '#20242c',
 };
 
-// Público a contraluz: siluetas frías y apagadas, no confeti
-const CROWD_COLORS = ['#233349', '#2b3c53', '#1e2d42', '#32425a', '#27374e', '#202f45'];
-
-/** Hash determinista 0..1 para variar el público sin patrón visible. */
+/** Hash determinista 0..1 (variación sin patrón visible). */
 function seed01(n: number): number {
   const x = Math.sin(n * 127.1 + 311.7) * 43758.5453;
   return x - Math.floor(x);
+}
+
+/** Aclara/oscurece un color hex un factor -1..1. */
+function shade(hex: string, k: number): string {
+  const n = parseInt(hex.slice(1), 16);
+  const ch = (v: number): number =>
+    Math.max(0, Math.min(255, Math.round(k >= 0 ? v + (255 - v) * k : v * (1 + k))));
+  const r = ch((n >> 16) & 255);
+  const g = ch((n >> 8) & 255);
+  const b = ch(n & 255);
+  return `rgb(${r},${g},${b})`;
 }
 
 interface Particle {
@@ -53,8 +65,8 @@ interface Particle {
   vx: number; vy: number; vz: number;
   life: number;
   maxLife: number;
-  color: string; // "r,g,b"
-  size: number; // radio en metros (para ring: radio inicial)
+  color: string;
+  size: number;
 }
 
 export class Renderer {
@@ -73,43 +85,19 @@ export class Renderer {
   /** Zonas objetivo de los desafíos, dibujadas sobre la pista. */
   targetZones: Array<{ x0: number; x1: number; z0: number; z1: number }> = [];
 
-  // Cielo estrellado fijo (posiciones relativas a la pantalla)
-  private stars = Array.from({ length: 80 }, () => ({
+  private stars = Array.from({ length: 40 }, () => ({
     x: Math.random(),
-    y: Math.random() * 0.2,
-    r: 0.4 + Math.random() * 1.1,
-    a: 0.2 + Math.random() * 0.5,
-  }));
-  // Motas de polvo en el aire bajo los focos (atmósfera)
-  private motes = Array.from({ length: 26 }, () => ({
-    x: Math.random(),
-    y: 0.15 + Math.random() * 0.5,
-    r: 0.6 + Math.random() * 1.2,
-    sp: 0.004 + Math.random() * 0.01,
-    ph: Math.random() * Math.PI * 2,
+    y: Math.random() * 0.16,
+    r: 0.4 + Math.random() * 0.9,
+    a: 0.15 + Math.random() * 0.35,
   }));
   private vignette: CanvasGradient | null = null;
-  private grain: CanvasPattern | null = null;
 
   constructor(canvas: HTMLCanvasElement) {
     this.canvas = canvas;
     this.ctx = canvas.getContext('2d')!;
-    this.makeGrain();
     this.resize();
     window.addEventListener('resize', () => this.resize());
-  }
-
-  /** Textura sutil de moqueta para el suelo (patrón pre-renderizado). */
-  private makeGrain(): void {
-    const c = document.createElement('canvas');
-    c.width = 96;
-    c.height = 96;
-    const g = c.getContext('2d')!;
-    for (let i = 0; i < 220; i++) {
-      g.fillStyle = Math.random() < 0.5 ? 'rgba(255,255,255,0.022)' : 'rgba(0,10,30,0.03)';
-      g.fillRect(Math.random() * 96, Math.random() * 96, 1.4, 1.4);
-    }
-    this.grain = this.ctx.createPattern(c, 'repeat');
   }
 
   resize(): void {
@@ -119,22 +107,21 @@ export class Renderer {
     this.canvas.width = this.W * dpr;
     this.canvas.height = this.H * dpr;
     this.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    // Encuadre adaptativo: en retrato (móvil) la escena baja y llena la
-    // pantalla; en apaisado, focal larga de retransmisión.
+    // Encuadre arcade: el campo cercano llena la parte baja de la pantalla
     const portrait = this.H > this.W * 1.2;
     if (portrait) {
-      this.f = Math.min(this.H * 0.6, this.W * 1.05);
-      this.horizonY = this.H * 0.34;
+      this.f = Math.min(this.H * 0.55, this.W * 1.25);
+      this.horizonY = this.H * 0.35;
     } else {
-      this.f = Math.min(this.H * 0.98, this.W * 0.6);
-      this.horizonY = this.H * 0.33;
+      this.f = Math.min(this.H * 0.84, this.W * 0.62);
+      this.horizonY = this.H * 0.3;
     }
     const g = this.ctx.createRadialGradient(
-      this.W / 2, this.H * 0.55, Math.min(this.W, this.H) * 0.45,
-      this.W / 2, this.H * 0.55, Math.max(this.W, this.H) * 0.8,
+      this.W / 2, this.H * 0.58, Math.min(this.W, this.H) * 0.42,
+      this.W / 2, this.H * 0.58, Math.max(this.W, this.H) * 0.82,
     );
     g.addColorStop(0, 'rgba(2, 8, 18, 0)');
-    g.addColorStop(1, 'rgba(2, 8, 18, 0.55)');
+    g.addColorStop(1, 'rgba(2, 8, 18, 0.6)');
     this.vignette = g;
   }
 
@@ -149,12 +136,10 @@ export class Renderer {
     };
   }
 
-  /** Sacudida de cámara (remates, víboras…). mag en píxeles iniciales. */
   shake(mag: number): void {
     this.shakeMag = Math.max(this.shakeMag, mag);
   }
 
-  /** El público reacciona: 1 = ovación completa. Decae solo. */
   exciteCrowd(amount: number): void {
     this.crowdExcite = Math.min(1, this.crowdExcite + amount);
   }
@@ -173,10 +158,9 @@ export class Renderer {
         life: 0.3 + Math.random() * 0.25,
         maxLife: 0.55,
         color,
-        size: 0.022 + Math.random() * 0.026,
+        size: 0.024 + Math.random() * 0.028,
       });
     }
-    // Onda expansiva en el suelo cuando el impacto es a ras de pista
     if (pos.y < 0.28) {
       this.particles.push({
         kind: 'ring',
@@ -187,7 +171,7 @@ export class Renderer {
         size: 0.12,
       });
     }
-    if (this.particles.length > 220) this.particles.splice(0, this.particles.length - 220);
+    if (this.particles.length > 200) this.particles.splice(0, this.particles.length - 200);
   }
 
   draw(ball: Ball, player: PlayerEntity, cpu: PlayerEntity, showBall: boolean): void {
@@ -207,11 +191,8 @@ export class Renderer {
       this.shakeMag = 0;
     }
 
-    this.drawBackground(now);
-    this.drawCrowd(dt, now);
-    this.drawFloodlights();
+    this.drawBackground(dt, now);
     this.drawCourt(now);
-    this.drawLedBoard(now);
     if (showBall) this.drawLandingMarker(ball, now);
     this.drawAvatar(cpu, this.cpuPalette, true);
     if (showBall && ball.pos.z <= COURT.netZ) this.drawBall(ball);
@@ -219,7 +200,6 @@ export class Renderer {
     if (showBall && ball.pos.z > COURT.netZ) this.drawBall(ball);
     this.drawParticles(dt);
     this.drawAvatar(player, PLAYER_PALETTE, false);
-    this.drawMotes(now);
     ctx.restore();
 
     if (this.vignette) {
@@ -229,193 +209,121 @@ export class Renderer {
   }
 
   // ==========================================================================
-  // Entorno
+  // Fondo: silueta de estadio, no decorado
   // ==========================================================================
 
-  private drawBackground(now: number): void {
+  private drawBackground(dt: number, now: number): void {
     const ctx = this.ctx;
+    this.crowdExcite *= Math.exp(-dt * 0.8);
     const g = ctx.createLinearGradient(0, 0, 0, this.H);
-    g.addColorStop(0, '#040a15');
-    g.addColorStop(0.32, '#0d2440');
-    g.addColorStop(0.6, '#123152');
-    g.addColorStop(1, '#0a1e35');
+    g.addColorStop(0, '#03060d');
+    g.addColorStop(0.3, '#081527');
+    g.addColorStop(1, '#050c18');
     ctx.fillStyle = g;
     ctx.fillRect(0, 0, this.W, this.H);
 
     for (const s of this.stars) {
-      const tw = 0.75 + Math.sin(now / 1400 + s.x * 20) * 0.25;
-      ctx.fillStyle = `rgba(215, 232, 255, ${(s.a * tw).toFixed(3)})`;
+      ctx.fillStyle = `rgba(200, 222, 250, ${s.a})`;
       ctx.beginPath();
       ctx.arc(s.x * this.W, s.y * this.H, s.r, 0, Math.PI * 2);
       ctx.fill();
     }
 
-    // Tribunas laterales: paredes oscuras que cierran la escena a los lados
+    // Grada: masas de silueta con cabezas onduladas (3 filas)
+    const t = now / 1000;
+    const bandTop = this.project(0, 8.4, -6).y;
+    const bandBot = this.project(0, 3.2, -1).y;
+    const gB = ctx.createLinearGradient(0, bandTop, 0, bandBot);
+    gB.addColorStop(0, '#050b15');
+    gB.addColorStop(1, '#0b1a2e');
+    ctx.fillStyle = gB;
+    ctx.fillRect(0, bandTop, this.W, bandBot - bandTop);
+
+    const ROW_COLORS = ['#182a41', '#13233a', '#0e1c31'];
+    for (let row = 2; row >= 0; row--) {
+      const z = -2 - row * 1.9;
+      const y = 4.5 + row * 1.05;
+      const bob = this.crowdExcite * Math.max(0, Math.sin(t * 8 + row * 2)) * 0.18;
+      const bottom = this.project(0, y - 1.1, z).y;
+      ctx.fillStyle = ROW_COLORS[row];
+      ctx.beginPath();
+      ctx.moveTo(-10, bottom);
+      for (let i = 0; i < 46; i++) {
+        const sd = seed01(i * 13 + row * 71);
+        const hx = -11 + i * 0.52 + (sd - 0.5) * 0.2;
+        const hp = this.project(hx, y + bob + (sd - 0.5) * 0.16, z);
+        const r = (0.15 + sd * 0.06) * hp.s;
+        if (sd > 0.1) ctx.arc(hp.x, hp.y, r, Math.PI, 0);
+        else ctx.lineTo(hp.x, hp.y + r);
+      }
+      ctx.lineTo(this.W + 10, bottom);
+      ctx.closePath();
+      ctx.fill();
+    }
+    // Barandilla
+    const ra = this.project(-10, 4.05, -1.3);
+    const rb = this.project(10, 4.05, -1.3);
+    ctx.strokeStyle = 'rgba(140, 175, 215, 0.3)';
+    ctx.lineWidth = 2.5;
+    ctx.beginPath();
+    ctx.moveTo(ra.x, ra.y);
+    ctx.lineTo(rb.x, rb.y);
+    ctx.stroke();
+
+    // Focos: grandes, cuatro luminarias con halo amplio
+    for (const lx of [-6.8, -2.3, 2.3, 6.8]) {
+      const p = this.project(lx, 8.6, -5.5);
+      const r = 0.62 * p.s;
+      ctx.strokeStyle = 'rgba(55, 75, 100, 0.7)';
+      ctx.lineWidth = Math.max(r * 0.14, 2);
+      const base = this.project(lx, 4.4, -5.5);
+      ctx.beginPath();
+      ctx.moveTo(p.x, p.y + r * 0.4);
+      ctx.lineTo(base.x, base.y);
+      ctx.stroke();
+      ctx.fillStyle = '#131f30';
+      ctx.beginPath();
+      ctx.roundRect(p.x - r * 1.4, p.y - r * 0.45, r * 2.8, r * 0.9, r * 0.2);
+      ctx.fill();
+      ctx.fillStyle = '#fff6d8';
+      for (let i = -1; i <= 1; i++) {
+        ctx.beginPath();
+        ctx.arc(p.x + i * r * 0.85, p.y, r * 0.28, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      const glow = ctx.createRadialGradient(p.x, p.y, r * 0.3, p.x, p.y, r * 4);
+      glow.addColorStop(0, 'rgba(255, 248, 215, 0.45)');
+      glow.addColorStop(1, 'rgba(255, 248, 215, 0)');
+      ctx.fillStyle = glow;
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, r * 4, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    // Tribunas laterales: masas oscuras que cierran la escena
     for (const side of [-1, 1] as const) {
       const quad = [
-        this.project(side * 9.4, 0, 21),
-        this.project(side * 9.4, 5.2, 21),
-        this.project(side * 9.4, 5.2, -1),
-        this.project(side * 9.4, 0, -1),
+        this.project(side * 9.6, 0, 21),
+        this.project(side * 9.6, 5, 21),
+        this.project(side * 9.6, 5, -1),
+        this.project(side * 9.6, 0, -1),
       ];
-      const gT = ctx.createLinearGradient(quad[0].x, 0, quad[3].x, 0);
-      gT.addColorStop(0, '#091524');
-      gT.addColorStop(1, '#0d1e33');
-      ctx.fillStyle = gT;
+      ctx.fillStyle = '#070f1c';
       ctx.beginPath();
       quad.forEach((q, i) => (i === 0 ? ctx.moveTo(q.x, q.y) : ctx.lineTo(q.x, q.y)));
       ctx.closePath();
       ctx.fill();
-      // remate superior y divisiones de la tribuna
-      ctx.strokeStyle = 'rgba(120, 155, 195, 0.22)';
+      ctx.strokeStyle = 'rgba(110, 145, 185, 0.18)';
       ctx.lineWidth = 2;
       ctx.beginPath();
       ctx.moveTo(quad[1].x, quad[1].y);
       ctx.lineTo(quad[2].x, quad[2].y);
       ctx.stroke();
-      ctx.lineWidth = 1;
-      for (const z of [3, 8, 13, 18]) {
-        const a = this.project(side * 9.4, 0, z);
-        const b = this.project(side * 9.4, 5.2, z);
-        ctx.beginPath();
-        ctx.moveTo(a.x, a.y);
-        ctx.lineTo(b.x, b.y);
-        ctx.stroke();
-      }
-    }
-  }
-
-  /** Motas de polvo iluminadas: atmósfera sutil delante de todo. */
-  private drawMotes(now: number): void {
-    const ctx = this.ctx;
-    for (const m of this.motes) {
-      const x = ((m.x + now * m.sp * 0.00001) % 1) * this.W;
-      const y = (m.y + Math.sin(now / 2400 + m.ph) * 0.012) * this.H;
-      ctx.fillStyle = 'rgba(200, 225, 255, 0.05)';
-      ctx.beginPath();
-      ctx.arc(x, y, m.r, 0, Math.PI * 2);
-      ctx.fill();
-    }
-  }
-
-  /** Gradas a contraluz: siluetas frías con balanceo leve; saltan en los puntos. */
-  private drawCrowd(dt: number, now: number): void {
-    this.crowdExcite *= Math.exp(-dt * 0.8);
-    const ctx = this.ctx;
-    const t = now / 1000;
-
-    // Banda de la grada con degradado
-    const bandTop = this.project(0, 8.6, -6.2).y;
-    const bandBottom = this.project(0, 3.4, -1.2).y;
-    const g = ctx.createLinearGradient(0, bandTop, 0, bandBottom);
-    g.addColorStop(0, '#050b16');
-    g.addColorStop(1, '#0e2138');
-    ctx.fillStyle = g;
-    ctx.fillRect(0, bandTop, this.W, bandBottom - bandTop);
-
-    for (let row = 0; row < 4; row++) {
-      const z = -1.6 - row * 1.7;
-      const y = 4.4 + row * 1.05;
-      // Banda de escalón entre filas: da estructura de grada real
-      const s0 = this.project(0, y - 0.62, z + 0.4);
-      ctx.fillStyle = `rgba(10, 22, 40, ${(0.55 - row * 0.12).toFixed(2)})`;
-      ctx.fillRect(0, s0.y, this.W, Math.max(2.5, 0.1 * s0.s));
-
-      const rowAlpha = 0.62 - row * 0.11;
-      for (let i = 0; i < 30; i++) {
-        const sd = seed01(i * 31 + row * 7);
-        if (sd < 0.12) continue; // asiento vacío
-        const x = -9.6 + i * 0.66 + (row % 2) * 0.33 + (sd - 0.5) * 0.18;
-        const phase = i * 1.7 + row * 2.3;
-        const idle = Math.sin(t * 1.5 + phase) * 0.03;
-        const jump = Math.max(0, Math.sin(t * 8 + phase)) * 0.24 * this.crowdExcite;
-        const p = this.project(x, y + idle + jump, z);
-        const r = (0.125 + sd * 0.05) * p.s;
-        ctx.globalAlpha = rowAlpha * (0.7 + sd * 0.5);
-        ctx.fillStyle = CROWD_COLORS[Math.floor(sd * CROWD_COLORS.length)];
-        // cabeza + hombros como una sola silueta
-        ctx.beginPath();
-        ctx.arc(p.x, p.y, r, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.beginPath();
-        ctx.ellipse(p.x, p.y + r * 1.6, r * 1.45, r * 1.1, 0, Math.PI, 0);
-        ctx.fill();
-        ctx.fillRect(p.x - r * 1.45, p.y + r * 1.6, r * 2.9, r * 1.3);
-        // brillo de contraluz en algunas cabezas
-        if (sd > 0.72) {
-          ctx.globalAlpha = rowAlpha * 0.5;
-          ctx.strokeStyle = 'rgba(150, 190, 235, 0.5)';
-          ctx.lineWidth = 1;
-          ctx.beginPath();
-          ctx.arc(p.x, p.y, r, -Math.PI * 0.85, -Math.PI * 0.15);
-          ctx.stroke();
-        }
-      }
-    }
-    ctx.globalAlpha = 1;
-
-    // Barandilla frontal de la grada
-    const ra = this.project(-9, 4.15, -1.4);
-    const rb = this.project(9, 4.15, -1.4);
-    ctx.strokeStyle = 'rgba(150, 180, 215, 0.35)';
-    ctx.lineWidth = 2;
-    ctx.beginPath();
-    ctx.moveTo(ra.x, ra.y);
-    ctx.lineTo(rb.x, rb.y);
-    ctx.stroke();
-  }
-
-  /** Torres de luz con glow y conos sutiles hacia la pista. */
-  private drawFloodlights(): void {
-    const ctx = this.ctx;
-    for (const lx of [-7.2, -2.4, 2.4, 7.2]) {
-      const p = this.project(lx, 8.9, -5.8);
-      const r = 0.5 * p.s;
-      // mástil
-      const base = this.project(lx, 4.6, -5.8);
-      ctx.strokeStyle = 'rgba(60, 80, 105, 0.8)';
-      ctx.lineWidth = Math.max(r * 0.16, 1.5);
-      ctx.beginPath();
-      ctx.moveTo(p.x, p.y + r * 0.6);
-      ctx.lineTo(base.x, base.y);
-      ctx.stroke();
-      // luminaria (barra con 3 lámparas)
-      ctx.fillStyle = '#1a2637';
-      ctx.fillRect(p.x - r * 1.5, p.y - r * 0.5, r * 3, r);
-      for (let i = -1; i <= 1; i++) {
-        ctx.fillStyle = '#fff7de';
-        ctx.beginPath();
-        ctx.arc(p.x + i * r, p.y, r * 0.32, 0, Math.PI * 2);
-        ctx.fill();
-      }
-      // glow
-      const g = ctx.createRadialGradient(p.x, p.y, r * 0.2, p.x, p.y, r * 3.4);
-      g.addColorStop(0, 'rgba(255, 250, 224, 0.5)');
-      g.addColorStop(0.3, 'rgba(255, 245, 205, 0.16)');
-      g.addColorStop(1, 'rgba(255, 245, 205, 0)');
-      ctx.fillStyle = g;
-      ctx.beginPath();
-      ctx.arc(p.x, p.y, r * 3.4, 0, Math.PI * 2);
-      ctx.fill();
-      // cono de luz hacia la pista
-      const t1 = this.project(lx * 0.55, 0, 6);
-      const t2 = this.project(lx * 0.2, 0, 12);
-      const cone = ctx.createLinearGradient(p.x, p.y, (t1.x + t2.x) / 2, (t1.y + t2.y) / 2);
-      cone.addColorStop(0, 'rgba(230, 240, 255, 0.055)');
-      cone.addColorStop(1, 'rgba(230, 240, 255, 0)');
-      ctx.fillStyle = cone;
-      ctx.beginPath();
-      ctx.moveTo(p.x - r * 0.8, p.y);
-      ctx.lineTo(p.x + r * 0.8, p.y);
-      ctx.lineTo(t2.x, t2.y);
-      ctx.lineTo(t1.x, t1.y);
-      ctx.closePath();
-      ctx.fill();
     }
   }
 
   // ==========================================================================
-  // Pista
+  // Pista: dos masas + luz grande + líneas con grosor en perspectiva
   // ==========================================================================
 
   private groundPoly(points: Array<[number, number]>): void {
@@ -429,15 +337,27 @@ export class Renderer {
     ctx.closePath();
   }
 
-  private groundLine(x1: number, z1: number, x2: number, z2: number, w = 2): void {
-    const ctx = this.ctx;
-    const a = this.project(x1, 0, z1);
-    const b = this.project(x2, 0, z2);
-    ctx.lineWidth = w;
-    ctx.beginPath();
-    ctx.moveTo(a.x, a.y);
-    ctx.lineTo(b.x, b.y);
-    ctx.stroke();
+  /** Línea de pista como banda con grosor real en metros (pesa en perspectiva). */
+  private lineBandH(x0: number, x1: number, z: number, t: number, style: string): void {
+    this.groundPoly([
+      [x0, z - t / 2],
+      [x1, z - t / 2],
+      [x1, z + t / 2],
+      [x0, z + t / 2],
+    ]);
+    this.ctx.fillStyle = style;
+    this.ctx.fill();
+  }
+
+  private lineBandV(x: number, z0: number, z1: number, t: number, style: string): void {
+    this.groundPoly([
+      [x - t / 2, z0],
+      [x + t / 2, z0],
+      [x + t / 2, z1],
+      [x - t / 2, z1],
+    ]);
+    this.ctx.fillStyle = style;
+    this.ctx.fill();
   }
 
   private drawCourt(now: number): void {
@@ -445,32 +365,31 @@ export class Renderer {
     const hw = COURT.halfWidth;
     const L = COURT.length;
 
-    // Plataforma exterior (que la pista no flote en el vacío)
+    // Base exterior oscura: la pista resalta sobre ella
     this.groundPoly([
-      [-9.5, -1.2],
-      [9.5, -1.2],
-      [9.5, L + 1],
-      [-9.5, L + 1],
+      [-10, -1.5],
+      [10, -1.5],
+      [10, L + 2],
+      [-10, L + 2],
     ]);
-    ctx.fillStyle = '#0b1c30';
+    ctx.fillStyle = '#081120';
     ctx.fill();
 
-    // Suelo de la pista: gradiente con caída lateral (luz cenital)
+    // Suelo: masa lejana fría → masa cercana iluminada
     this.groundPoly([
       [-hw, 0],
       [hw, 0],
       [hw, L],
       [-hw, L],
     ]);
-    // Perspectiva de luz: fondo frío y oscuro, zona cercana iluminada
     const gFloor = ctx.createLinearGradient(0, this.horizonY, 0, this.H);
-    gFloor.addColorStop(0, '#123f66');
-    gFloor.addColorStop(0.45, '#2065a8');
-    gFloor.addColorStop(1, '#3585d0');
+    gFloor.addColorStop(0, '#173e63');
+    gFloor.addColorStop(0.42, '#2364a4');
+    gFloor.addColorStop(1, '#3d8fdd');
     ctx.fillStyle = gFloor;
     ctx.fill();
 
-    // Charcos de luz de los focos sobre la pista (recortados al suelo)
+    // Luz por masas: gran mancha en el campo cercano, menor en el rival
     ctx.save();
     this.groundPoly([
       [-hw, 0],
@@ -479,246 +398,68 @@ export class Renderer {
       [-hw, L],
     ]);
     ctx.clip();
-    // Variación por zonas: carriles laterales más fríos, pasillo central vivo
-    for (const side of [-1, 1] as const) {
-      this.groundPoly([
-        [side * 3.4, 0],
-        [side * hw, 0],
-        [side * hw, L],
-        [side * 3.4, L],
-      ]);
-      ctx.fillStyle = 'rgba(7, 28, 56, 0.18)';
-      ctx.fill();
-    }
-    this.groundPoly([
-      [-3.4, 0],
-      [3.4, 0],
-      [3.4, L],
-      [-3.4, L],
-    ]);
-    ctx.fillStyle = 'rgba(255, 255, 255, 0.028)';
-    ctx.fill();
-
-    for (const [px, pz, pr] of [[-2.6, 7.5, 5.2], [2.6, 7.5, 5.2], [-2.6, 14, 5.6], [2.6, 14, 5.6]] as const) {
-      const c = this.project(px, 0, pz);
+    for (const [pz, pr, al] of [[15.5, 9, 0.16], [5, 6.5, 0.09]] as const) {
+      const c = this.project(0, 0, pz);
       const rr = pr * c.s;
       const pool = ctx.createRadialGradient(c.x, c.y, 0, c.x, c.y, rr);
-      pool.addColorStop(0, 'rgba(195, 228, 255, 0.17)');
-      pool.addColorStop(0.55, 'rgba(195, 228, 255, 0.06)');
-      pool.addColorStop(1, 'rgba(195, 228, 255, 0)');
+      pool.addColorStop(0, `rgba(200, 230, 255, ${al})`);
+      pool.addColorStop(1, 'rgba(200, 230, 255, 0)');
       ctx.fillStyle = pool;
       ctx.beginPath();
-      ctx.ellipse(c.x, c.y, rr, rr * 0.4, 0, 0, Math.PI * 2);
+      ctx.ellipse(c.x, c.y, rr, rr * 0.42, 0, 0, Math.PI * 2);
       ctx.fill();
     }
-    // material: textura sutil de moqueta
-    if (this.grain) {
-      ctx.fillStyle = this.grain;
-      ctx.fillRect(0, this.horizonY, this.W, this.H - this.horizonY);
-    }
-    // sombra interior en todo el perímetro (la pista deja de ser un plano)
+    // Sombra perimetral fuerte: la pista tiene borde, no se funde
     const edge = (poly: Array<[number, number]>, x0: number, y0: number, x1: number, y1: number): void => {
       this.groundPoly(poly);
       const gE = ctx.createLinearGradient(x0, y0, x1, y1);
-      gE.addColorStop(0, 'rgba(3, 13, 28, 0.4)');
-      gE.addColorStop(1, 'rgba(3, 13, 28, 0)');
+      gE.addColorStop(0, 'rgba(3, 11, 24, 0.5)');
+      gE.addColorStop(1, 'rgba(3, 11, 24, 0)');
       ctx.fillStyle = gE;
       ctx.fill();
     };
     for (const side of [-1, 1] as const) {
       const px0 = this.project(side * hw, 0, L / 2).x;
-      const px1 = this.project(side * (hw - 1.7), 0, L / 2).x;
-      edge([[side * hw, 0], [side * (hw - 1.7), 0], [side * (hw - 1.7), L], [side * hw, L]], px0, 0, px1, 0);
+      const px1 = this.project(side * (hw - 1.5), 0, L / 2).x;
+      edge([[side * hw, 0], [side * (hw - 1.5), 0], [side * (hw - 1.5), L], [side * hw, L]], px0, 0, px1, 0);
     }
-    const yFar0 = this.project(0, 0, 0).y;
-    const yFar1 = this.project(0, 0, 1.6).y;
-    edge([[-hw, 0], [hw, 0], [hw, 1.6], [-hw, 1.6]], 0, yFar0, 0, yFar1);
-    const yNear0 = this.project(0, 0, L).y;
-    const yNear1 = this.project(0, 0, L - 1.8).y;
-    edge([[-hw, L], [hw, L], [hw, L - 1.8], [-hw, L - 1.8]], 0, yNear0, 0, yNear1);
-    ctx.restore();
-    // bandas de cepillado alternas
-    for (let z = 0; z < L; z += 2.5) {
-      if ((z / 2.5) % 2 === 0) continue;
-      this.groundPoly([
-        [-hw, z],
-        [hw, z],
-        [hw, Math.min(z + 2.5, L)],
-        [-hw, Math.min(z + 2.5, L)],
-      ]);
-      ctx.fillStyle = 'rgba(255,255,255,0.035)';
-      ctx.fill();
-    }
-    // sombra de la red sobre el suelo + oscurecido tras la red (separa planos)
+    const yF0 = this.project(0, 0, 0).y;
+    const yF1 = this.project(0, 0, 1.8).y;
+    edge([[-hw, 0], [hw, 0], [hw, 1.8], [-hw, 1.8]], 0, yF0, 0, yF1);
+    // oscurecido tras la red: separa los dos campos
     this.groundPoly([
-      [-hw, COURT.netZ + 0.15],
-      [hw, COURT.netZ + 0.15],
-      [hw, COURT.netZ + 0.75],
-      [-hw, COURT.netZ + 0.75],
-    ]);
-    ctx.fillStyle = 'rgba(3, 12, 26, 0.18)';
-    ctx.fill();
-    this.groundPoly([
-      [-hw, COURT.netZ - 1.4],
-      [hw, COURT.netZ - 1.4],
+      [-hw, COURT.netZ - 1.6],
+      [hw, COURT.netZ - 1.6],
       [hw, COURT.netZ],
       [-hw, COURT.netZ],
     ]);
-    ctx.fillStyle = 'rgba(4, 14, 30, 0.1)';
+    ctx.fillStyle = 'rgba(4, 14, 30, 0.14)';
     ctx.fill();
+    // sombra de la red
+    this.groundPoly([
+      [-hw, COURT.netZ + 0.1],
+      [hw, COURT.netZ + 0.1],
+      [hw, COURT.netZ + 0.9],
+      [-hw, COURT.netZ + 0.9],
+    ]);
+    ctx.fillStyle = 'rgba(3, 12, 26, 0.22)';
+    ctx.fill();
+    ctx.restore();
 
-    // Losa perimetral con grosor: cara lateral oscura + labio superior claro
-    const slab = (pts: Array<[number, number]>): void => {
-      // pts: [x,z] del borde; se extruye hacia abajo (y negativa)
-      ctx.beginPath();
-      const top = pts.map(([x, z]) => this.project(x, 0, z));
-      const bot = [...pts].reverse().map(([x, z]) => this.project(x, -0.32, z));
-      [...top, ...bot].forEach((q, i) => (i === 0 ? ctx.moveTo(q.x, q.y) : ctx.lineTo(q.x, q.y)));
-      ctx.closePath();
-      ctx.fillStyle = '#050e1c';
-      ctx.fill();
-      ctx.strokeStyle = 'rgba(150, 195, 240, 0.5)';
-      ctx.lineWidth = 2;
-      ctx.beginPath();
-      top.forEach((q, i) => (i === 0 ? ctx.moveTo(q.x, q.y) : ctx.lineTo(q.x, q.y)));
-      ctx.stroke();
-    };
-    slab([[-9.5, L + 1], [9.5, L + 1]]); // frente de la plataforma
-    slab([[-9.5, 12], [-9.5, L + 1]]);
-    slab([[9.5, L + 1], [9.5, 12]]);
-
-    // Cristales como paredes: paneles individuales + zócalo + raíl superior
-    const wh = COURT.wallHeight;
-    const quad3d = (pts: Array<[number, number, number]>): void => {
-      ctx.beginPath();
-      pts.forEach(([x, y, z], i) => {
-        const p = this.project(x, y, z);
-        if (i === 0) ctx.moveTo(p.x, p.y);
-        else ctx.lineTo(p.x, p.y);
-      });
-      ctx.closePath();
-    };
-    // Un panel de cristal con reflejo diagonal propio (varía por índice)
-    const glassPanel = (
-      a: [number, number], b: [number, number], idx: number, backWall: boolean,
-    ): void => {
-      quad3d([[a[0], 0.28, a[1]], [b[0], 0.28, b[1]], [b[0], wh, b[1]], [a[0], wh, a[1]]]);
-      const baseA = backWall ? 0.12 : 0.08;
-      ctx.fillStyle = `rgba(155, 205, 250, ${(baseA + seed01(idx * 17) * 0.05).toFixed(3)})`;
-      ctx.fill();
-      ctx.strokeStyle = 'rgba(190, 222, 250, 0.34)';
-      ctx.lineWidth = 1.2;
-      ctx.stroke();
-      // reflejo vertical suave en algunos paneles
-      if (seed01(idx * 53 + 7) > 0.4) {
-        const t0 = this.project((a[0] + b[0]) / 2, wh, (a[1] + b[1]) / 2);
-        const b0 = this.project(a[0] * 0.35 + b[0] * 0.65, 0.4, a[1] * 0.35 + b[1] * 0.65);
-        const gR = ctx.createLinearGradient(t0.x, t0.y, b0.x, b0.y);
-        gR.addColorStop(0, `rgba(255,255,255,${(0.05 + seed01(idx * 3) * 0.06).toFixed(3)})`);
-        gR.addColorStop(1, 'rgba(255,255,255,0)');
-        ctx.strokeStyle = gR;
-        ctx.lineWidth = Math.max(t0.s * 0.35, 4);
-        ctx.beginPath();
-        ctx.moveTo(t0.x, t0.y);
-        ctx.lineTo(b0.x, b0.y);
-        ctx.stroke();
-      }
-    };
-    // Zócalo oscuro donde el cristal toca el suelo
-    const plinth = (a: [number, number], b: [number, number]): void => {
-      quad3d([[a[0], 0, a[1]], [b[0], 0, b[1]], [b[0], 0.28, b[1]], [a[0], 0.28, a[1]]]);
-      ctx.fillStyle = 'rgba(6, 15, 28, 0.72)';
-      ctx.fill();
-    };
-    // Raíl superior con grosor: cara clara + canto oscuro
-    const rail = (a: [number, number], b: [number, number]): void => {
-      quad3d([[a[0], wh, a[1]], [b[0], wh, b[1]], [b[0], wh + 0.14, b[1]], [a[0], wh + 0.14, a[1]]]);
-      ctx.fillStyle = 'rgba(175, 205, 235, 0.55)';
-      ctx.fill();
-      const pa = this.project(a[0], wh, a[1]);
-      const pb = this.project(b[0], wh, b[1]);
-      ctx.strokeStyle = 'rgba(20, 40, 65, 0.6)';
-      ctx.lineWidth = 1.5;
-      ctx.beginPath();
-      ctx.moveTo(pa.x, pa.y);
-      ctx.lineTo(pb.x, pb.y);
-      ctx.stroke();
-    };
-
-    // Pared de fondo: 5 paneles de 2 m
-    plinth([-hw, 0], [hw, 0]);
-    for (let i = 0; i < 5; i++) {
-      glassPanel([-hw + i * 2, 0], [-hw + (i + 1) * 2, 0], i, true);
+    // Líneas: halo suave + banda blanca con grosor en perspectiva
+    const t = 0.1;
+    for (const z of [0.08, L - 0.08, COURT.serviceLineCpu, COURT.serviceLinePlayer]) {
+      this.lineBandH(-hw, hw, z, t * 2.6, 'rgba(255,255,255,0.16)');
     }
-    rail([-hw, 0], [hw, 0]);
-    // Paredes laterales: 5 paneles de 4 m cada una
-    for (const side of [-1, 1] as const) {
-      plinth([side * hw, 0], [side * hw, L]);
-      for (let i = 0; i < 5; i++) {
-        glassPanel([side * hw, i * 4], [side * hw, (i + 1) * 4], i + 10 * side + 20, false);
-      }
-      rail([side * hw, 0], [side * hw, L]);
+    this.lineBandV(0, COURT.serviceLineCpu, COURT.serviceLinePlayer, t * 2.6, 'rgba(255,255,255,0.16)');
+    for (const z of [0.08, L - 0.08, COURT.serviceLineCpu, COURT.serviceLinePlayer]) {
+      this.lineBandH(-hw, hw, z, t, 'rgba(255,255,255,0.96)');
     }
+    this.lineBandV(0, COURT.serviceLineCpu, COURT.serviceLinePlayer, t, 'rgba(255,255,255,0.96)');
 
-    // Perfiles metálicos con remate superior brillante
-    ctx.strokeStyle = 'rgba(205, 228, 250, 0.34)';
-    ctx.lineWidth = 2;
-    const post = (x: number, z: number): void => {
-      const a = this.project(x, 0, z);
-      const b = this.project(x, wh, z);
-      ctx.beginPath();
-      ctx.moveTo(a.x, a.y);
-      ctx.lineTo(b.x, b.y);
-      ctx.stroke();
-      ctx.fillStyle = 'rgba(230, 244, 255, 0.7)';
-      ctx.beginPath();
-      ctx.arc(b.x, b.y, 1.6, 0, Math.PI * 2);
-      ctx.fill();
-    };
-    for (const x of [-hw, -hw / 2, 0, hw / 2, hw]) post(x, 0);
-    for (const z of [0, 4, 8, 12, 16, L]) {
-      post(-hw, z);
-      post(hw, z);
-    }
-
-    // Reflejo diagonal en el cristal de fondo
-    const rTop = this.project(-hw * 0.55, wh, 0);
-    const rBot = this.project(-hw * 0.15, 0.3, 0);
-    const gGlass = ctx.createLinearGradient(rTop.x, rTop.y, rBot.x, rBot.y);
-    gGlass.addColorStop(0, 'rgba(255,255,255,0.11)');
-    gGlass.addColorStop(1, 'rgba(255,255,255,0)');
-    ctx.strokeStyle = gGlass;
-    ctx.lineWidth = 10;
-    ctx.beginPath();
-    ctx.moveTo(rTop.x, rTop.y);
-    ctx.lineTo(rBot.x, rBot.y);
-    ctx.stroke();
-
-    // Líneas con halo (doble trazo)
-    ctx.strokeStyle = 'rgba(255,255,255,0.22)';
-    this.groundLine(-hw, 0.05, hw, 0.05, 6);
-    this.groundLine(-hw, L - 0.05, hw, L - 0.05, 6);
-    this.groundLine(-hw, COURT.serviceLineCpu, hw, COURT.serviceLineCpu, 5);
-    this.groundLine(-hw, COURT.serviceLinePlayer, hw, COURT.serviceLinePlayer, 5);
-    this.groundLine(0, COURT.serviceLineCpu, 0, COURT.serviceLinePlayer, 5);
-    ctx.strokeStyle = 'rgba(255,255,255,0.95)';
-    this.groundLine(-hw, 0.05, hw, 0.05, 3);
-    this.groundLine(-hw, L - 0.05, hw, L - 0.05, 3);
-    this.groundLine(-hw, COURT.serviceLineCpu, hw, COURT.serviceLineCpu, 2);
-    this.groundLine(-hw, COURT.serviceLinePlayer, hw, COURT.serviceLinePlayer, 2);
-    this.groundLine(0, COURT.serviceLineCpu, 0, COURT.serviceLinePlayer, 2);
-
-    // Perspectiva aérea: una capa de bruma fría difumina el fondo
-    const fogBottom = this.project(0, 0, COURT.netZ - 1).y;
-    const gFog = ctx.createLinearGradient(0, this.horizonY - this.H * 0.04, 0, fogBottom);
-    gFog.addColorStop(0, 'rgba(125, 170, 220, 0.14)');
-    gFog.addColorStop(1, 'rgba(125, 170, 220, 0)');
-    ctx.fillStyle = gFog;
-    ctx.fillRect(0, this.horizonY - this.H * 0.04, this.W, fogBottom - this.horizonY + this.H * 0.04);
-
-    // Zonas objetivo de los desafíos, con pulso sutil
+    // Zonas objetivo de los desafíos
     if (this.targetZones.length > 0) {
-      const pulse = 0.13 + Math.sin(now / 300) * 0.05;
+      const pulse = 0.15 + Math.sin(now / 300) * 0.06;
       for (const z of this.targetZones) {
         this.groundPoly([
           [z.x0, z.z0],
@@ -728,19 +469,82 @@ export class Renderer {
         ]);
         ctx.fillStyle = `rgba(52, 211, 153, ${pulse.toFixed(3)})`;
         ctx.fill();
-        ctx.strokeStyle = 'rgba(52, 211, 153, 0.85)';
-        ctx.lineWidth = 2.5;
+        ctx.strokeStyle = 'rgba(52, 211, 153, 0.9)';
+        ctx.lineWidth = 3;
         ctx.stroke();
       }
     }
+
+    this.drawGlass();
+    this.drawLedBoard(now);
   }
 
-  /** Valla LED en lo alto del cristal de fondo, con marquesina. */
+  /** Cristales gráficos: pocos paneles grandes con masa visual. */
+  private drawGlass(): void {
+    const ctx = this.ctx;
+    const hw = COURT.halfWidth;
+    const L = COURT.length;
+    const wh = COURT.wallHeight;
+
+    const quad3d = (pts: Array<[number, number, number]>): void => {
+      ctx.beginPath();
+      pts.forEach(([x, y, z], i) => {
+        const p = this.project(x, y, z);
+        if (i === 0) ctx.moveTo(p.x, p.y);
+        else ctx.lineTo(p.x, p.y);
+      });
+      ctx.closePath();
+    };
+
+    const wall = (a: [number, number], b: [number, number], cuts: number, back: boolean): void => {
+      // base oscura donde el cristal toca el suelo
+      quad3d([[a[0], 0, a[1]], [b[0], 0, b[1]], [b[0], 0.32, b[1]], [a[0], 0.32, a[1]]]);
+      ctx.fillStyle = 'rgba(5, 13, 25, 0.8)';
+      ctx.fill();
+      // plano translúcido completo
+      quad3d([[a[0], 0.32, a[1]], [b[0], 0.32, b[1]], [b[0], wh, b[1]], [a[0], wh, a[1]]]);
+      ctx.fillStyle = back ? 'rgba(140, 195, 245, 0.12)' : 'rgba(140, 195, 245, 0.07)';
+      ctx.fill();
+      // brillo grande y suave en diagonal
+      const mid = this.project((a[0] + b[0]) / 2, wh * 0.7, (a[1] + b[1]) / 2);
+      const gS = ctx.createLinearGradient(mid.x - mid.s, mid.y - mid.s, mid.x + mid.s, mid.y + mid.s);
+      gS.addColorStop(0, 'rgba(255,255,255,0.09)');
+      gS.addColorStop(0.5, 'rgba(255,255,255,0.015)');
+      gS.addColorStop(1, 'rgba(255,255,255,0)');
+      quad3d([[a[0], 0.32, a[1]], [b[0], 0.32, b[1]], [b[0], wh, b[1]], [a[0], wh, a[1]]]);
+      ctx.fillStyle = gS;
+      ctx.fill();
+      // cortes verticales (pocos) y marco
+      ctx.strokeStyle = 'rgba(175, 210, 245, 0.4)';
+      ctx.lineWidth = 2.5;
+      for (let i = 0; i <= cuts; i++) {
+        const k = i / cuts;
+        const x = a[0] + (b[0] - a[0]) * k;
+        const z = a[1] + (b[1] - a[1]) * k;
+        const p0 = this.project(x, 0, z);
+        const p1 = this.project(x, wh, z);
+        ctx.beginPath();
+        ctx.moveTo(p0.x, p0.y);
+        ctx.lineTo(p1.x, p1.y);
+        ctx.stroke();
+      }
+      // remate superior claro con grosor
+      quad3d([[a[0], wh, a[1]], [b[0], wh, b[1]], [b[0], wh + 0.18, b[1]], [a[0], wh + 0.18, a[1]]]);
+      ctx.fillStyle = 'rgba(190, 218, 245, 0.65)';
+      ctx.fill();
+    };
+
+    wall([-hw, 0], [hw, 0], 3, true);
+    wall([-hw, 0], [-hw, L], 4, false);
+    wall([hw, 0], [hw, L], 4, false);
+  }
+
+  /** Valla LED con marquesina en lo alto del cristal de fondo. */
   private drawLedBoard(now: number): void {
     const ctx = this.ctx;
     const hw = COURT.halfWidth;
     const tl = this.project(-hw, 3.95, 0);
-    const br = this.project(hw, 3.5, 0);
+    const br = this.project(hw, 3.45, 0);
     const w = br.x - tl.x;
     const h = br.y - tl.y;
     if (w < 40) return;
@@ -750,8 +554,8 @@ export class Renderer {
     ctx.clip();
     ctx.fillStyle = '#04090f';
     ctx.fillRect(tl.x, tl.y, w, h);
-    ctx.fillStyle = 'rgba(255, 209, 102, 0.85)';
-    ctx.font = `bold ${Math.max(h * 0.55, 7).toFixed(1)}px "Segoe UI", sans-serif`;
+    ctx.fillStyle = 'rgba(255, 209, 102, 0.9)';
+    ctx.font = `bold ${Math.max(h * 0.55, 8).toFixed(1)}px "Segoe UI", sans-serif`;
     ctx.textBaseline = 'middle';
     const msg = 'PÁDEL CAM  ●  JUEGA CON TU CUERPO  ●  ';
     const mw = Math.max(ctx.measureText(msg).width, 40);
@@ -761,6 +565,10 @@ export class Renderer {
     }
     ctx.restore();
   }
+
+  // ==========================================================================
+  // Red: fuerte, divide la pista
+  // ==========================================================================
 
   private drawNet(): void {
     const ctx = this.ctx;
@@ -772,7 +580,8 @@ export class Renderer {
     const at = this.project(-hw, nh, nz);
     const bt = this.project(hw, nh, nz);
 
-    ctx.fillStyle = 'rgba(8, 20, 34, 0.5)';
+    // cuerpo de la red
+    ctx.fillStyle = 'rgba(9, 20, 34, 0.6)';
     ctx.beginPath();
     ctx.moveTo(a.x, a.y);
     ctx.lineTo(b.x, b.y);
@@ -781,10 +590,10 @@ export class Renderer {
     ctx.closePath();
     ctx.fill();
 
-    // Retícula
-    ctx.strokeStyle = 'rgba(220, 235, 250, 0.16)';
-    ctx.lineWidth = 1;
-    for (let x = -hw + 0.4; x < hw; x += 0.45) {
+    // malla sugerida (pocas líneas)
+    ctx.strokeStyle = 'rgba(215, 232, 248, 0.14)';
+    ctx.lineWidth = 1.5;
+    for (let x = -hw + 0.8; x < hw; x += 0.8) {
       const v0 = this.project(x, 0, nz);
       const v1 = this.project(x, nh, nz);
       ctx.beginPath();
@@ -792,80 +601,64 @@ export class Renderer {
       ctx.lineTo(v1.x, v1.y);
       ctx.stroke();
     }
-    for (const y of [0.3, 0.6]) {
-      const h0 = this.project(-hw, y, nz);
-      const h1 = this.project(hw, y, nz);
-      ctx.beginPath();
-      ctx.moveTo(h0.x, h0.y);
-      ctx.lineTo(h1.x, h1.y);
-      ctx.stroke();
-    }
+    const h0 = this.project(-hw, nh * 0.5, nz);
+    const h1 = this.project(hw, nh * 0.5, nz);
+    ctx.beginPath();
+    ctx.moveTo(h0.x, h0.y);
+    ctx.lineTo(h1.x, h1.y);
+    ctx.stroke();
 
-    // Banda superior con volumen (cara blanca + canto en sombra)
-    const bandTopL = this.project(-hw, nh + 0.045, nz);
-    const bandTopR = this.project(hw, nh + 0.045, nz);
-    const bandBotL = this.project(-hw, nh - 0.075, nz);
-    const bandBotR = this.project(hw, nh - 0.075, nz);
-    const gBand = ctx.createLinearGradient(0, bandTopL.y, 0, bandBotL.y);
+    // banda superior gruesa con volumen
+    const bT = this.project(0, nh + 0.06, nz);
+    const bB = this.project(0, nh - 0.12, nz);
+    const gBand = ctx.createLinearGradient(0, bT.y, 0, bB.y);
     gBand.addColorStop(0, '#ffffff');
-    gBand.addColorStop(0.65, '#e4ebf3');
-    gBand.addColorStop(1, '#a9b8c8');
+    gBand.addColorStop(0.7, '#dbe4ee');
+    gBand.addColorStop(1, '#93a5ba');
     ctx.fillStyle = gBand;
     ctx.beginPath();
-    ctx.moveTo(bandTopL.x, bandTopL.y);
-    ctx.lineTo(bandTopR.x, bandTopR.y);
-    ctx.lineTo(bandBotR.x, bandBotR.y);
-    ctx.lineTo(bandBotL.x, bandBotL.y);
+    ctx.moveTo(this.project(-hw, nh + 0.06, nz).x, this.project(-hw, nh + 0.06, nz).y);
+    ctx.lineTo(this.project(hw, nh + 0.06, nz).x, this.project(hw, nh + 0.06, nz).y);
+    ctx.lineTo(this.project(hw, nh - 0.12, nz).x, this.project(hw, nh - 0.12, nz).y);
+    ctx.lineTo(this.project(-hw, nh - 0.12, nz).x, this.project(-hw, nh - 0.12, nz).y);
     ctx.closePath();
     ctx.fill();
-    ctx.strokeStyle = 'rgba(30, 48, 70, 0.5)';
-    ctx.lineWidth = 1;
-    ctx.beginPath();
-    ctx.moveTo(bandBotL.x, bandBotL.y);
-    ctx.lineTo(bandBotR.x, bandBotR.y);
-    ctx.stroke();
-    // Cinta central
-    const cTop = this.project(0, nh, nz);
-    const cBot = this.project(0, 0, nz);
-    ctx.strokeStyle = 'rgba(244, 247, 251, 0.8)';
-    ctx.lineWidth = 2;
-    ctx.beginPath();
-    ctx.moveTo(cTop.x, cTop.y);
-    ctx.lineTo(cBot.x, cBot.y);
+    ctx.strokeStyle = OUTLINE;
+    ctx.lineWidth = 1.5;
     ctx.stroke();
 
-    // Postes con grosor, remate y sombra en la base
+    // postes contundentes
     for (const px of [-hw, hw]) {
       const base = this.project(px, 0, nz);
-      const top = this.project(px, nh + 0.14, nz);
-      // sombra del poste
-      ctx.fillStyle = 'rgba(2, 8, 18, 0.35)';
+      const top = this.project(px, nh + 0.16, nz);
+      ctx.fillStyle = 'rgba(2, 8, 18, 0.4)';
       ctx.beginPath();
-      ctx.ellipse(base.x + base.s * 0.06, base.y, base.s * 0.14, base.s * 0.05, 0, 0, Math.PI * 2);
+      ctx.ellipse(base.x + base.s * 0.05, base.y, base.s * 0.16, base.s * 0.055, 0, 0, Math.PI * 2);
       ctx.fill();
-      const gP = ctx.createLinearGradient(base.x - 4, 0, base.x + 4, 0);
-      gP.addColorStop(0, '#b9c6d4');
-      gP.addColorStop(0.4, '#eef3f8');
-      gP.addColorStop(1, '#8c9aa9');
-      ctx.strokeStyle = gP;
-      ctx.lineWidth = Math.max(base.s * 0.075, 4);
+      ctx.strokeStyle = OUTLINE;
       ctx.lineCap = 'round';
+      ctx.lineWidth = Math.max(base.s * 0.13, 6);
       ctx.beginPath();
       ctx.moveTo(base.x, base.y);
       ctx.lineTo(top.x, top.y);
       ctx.stroke();
-      ctx.fillStyle = '#f4f8fc';
+      const gP = ctx.createLinearGradient(base.x - 5, 0, base.x + 5, 0);
+      gP.addColorStop(0, '#c3cfdc');
+      gP.addColorStop(0.45, '#f2f6fa');
+      gP.addColorStop(1, '#93a2b3');
+      ctx.strokeStyle = gP;
+      ctx.lineWidth = Math.max(base.s * 0.095, 4.5);
       ctx.beginPath();
-      ctx.arc(top.x, top.y, Math.max(base.s * 0.045, 2.5), 0, Math.PI * 2);
-      ctx.fill();
+      ctx.moveTo(base.x, base.y);
+      ctx.lineTo(top.x, top.y);
+      ctx.stroke();
     }
   }
 
   // ==========================================================================
-  // Pelota
+  // Pelota: siempre lo más brillante
   // ==========================================================================
 
-  /** Marca de bote prevista: anticipa dónde caerá la bola (lectura moderna). */
   private drawLandingMarker(ball: Ball, now: number): void {
     if (!ball.active) return;
     const speed2 = ball.vel.x ** 2 + ball.vel.z ** 2;
@@ -874,30 +667,28 @@ export class Renderer {
     if (Math.abs(land.x) > COURT.halfWidth || land.z < 0 || land.z > COURT.length) return;
     const ctx = this.ctx;
     const p = this.project(land.x, 0, land.z);
-    const r = Math.max(0.3 * p.s, 6);
+    const r = Math.max(0.32 * p.s, 7);
     const pulse = 0.75 + Math.sin(now / 130) * 0.25;
-    ctx.strokeStyle = `rgba(217, 224, 33, ${(0.35 * pulse).toFixed(3)})`;
-    ctx.lineWidth = 2;
+    ctx.strokeStyle = `rgba(220, 228, 40, ${(0.4 * pulse).toFixed(3)})`;
+    ctx.lineWidth = 2.5;
     ctx.beginPath();
-    ctx.ellipse(p.x, p.y, r, r * 0.38, 0, 0, Math.PI * 2);
+    ctx.ellipse(p.x, p.y, r, r * 0.4, 0, 0, Math.PI * 2);
     ctx.stroke();
-    ctx.fillStyle = `rgba(217, 224, 33, ${(0.10 * pulse).toFixed(3)})`;
-    ctx.fill();
   }
 
   private drawBall(ball: Ball): void {
     const ctx = this.ctx;
     const pos = ball.pos;
 
-    // Estela: cinta afilada que sigue la trayectoria
+    // Estela corta y deportiva
     const tr = ball.trail;
     if (tr.length >= 2) {
-      for (let i = 1; i < tr.length; i++) {
+      for (let i = Math.max(1, tr.length - 6); i < tr.length; i++) {
         const a = this.project(tr[i - 1].x, tr[i - 1].y, tr[i - 1].z);
         const b = this.project(tr[i].x, tr[i].y, tr[i].z);
-        const k = i / tr.length;
-        ctx.strokeStyle = `rgba(217, 224, 33, ${(k * 0.30).toFixed(3)})`;
-        ctx.lineWidth = Math.max(BALL_RADIUS * b.s * 1.5 * k, 1);
+        const k = (i - (tr.length - 6)) / 6;
+        ctx.strokeStyle = `rgba(222, 230, 40, ${(k * 0.35).toFixed(3)})`;
+        ctx.lineWidth = Math.max(BALL_RADIUS * b.s * 1.7 * k, 1.5);
         ctx.lineCap = 'round';
         ctx.beginPath();
         ctx.moveTo(a.x, a.y);
@@ -906,53 +697,41 @@ export class Renderer {
       }
     }
 
-    // Reflejo tenue en el cristal del fondo cuando la bola pasa cerca
-    if (pos.z < 3.2 && pos.y < 3.6) {
-      const k = 1 - pos.z / 3.2;
-      const rp = this.project(pos.x, pos.y, -pos.z * 0.8);
-      const rr = Math.max(BALL_RADIUS * rp.s * 1.4, 2);
-      ctx.fillStyle = `rgba(220, 228, 90, ${(0.14 * k).toFixed(3)})`;
-      ctx.beginPath();
-      ctx.arc(rp.x, rp.y, rr, 0, Math.PI * 2);
-      ctx.fill();
-    }
-
-    // Sombra dinámica (más nítida cuanto más baja va la bola)
+    // Sombra dinámica
     const sh = this.project(pos.x, 0, pos.z);
-    const shR = Math.max(BALL_RADIUS * sh.s, 2.5);
-    const hFade = Math.max(0.16, 0.45 - pos.y * 0.09);
-    const gSh = ctx.createRadialGradient(sh.x, sh.y, 0, sh.x, sh.y, shR * 1.6);
-    gSh.addColorStop(0, `rgba(0, 4, 12, ${hFade.toFixed(3)})`);
-    gSh.addColorStop(1, 'rgba(0, 4, 12, 0)');
-    ctx.fillStyle = gSh;
+    const shR = Math.max(BALL_RADIUS * sh.s * 1.2, 3);
+    const hFade = Math.max(0.18, 0.5 - pos.y * 0.1);
+    ctx.fillStyle = `rgba(0, 4, 12, ${hFade.toFixed(3)})`;
     ctx.beginPath();
-    ctx.ellipse(sh.x, sh.y, shR * 1.6, shR * 0.55, 0, 0, Math.PI * 2);
+    ctx.ellipse(sh.x, sh.y, shR * 1.3, shR * 0.45, 0, 0, Math.PI * 2);
     ctx.fill();
 
     const p = this.project(pos.x, pos.y, pos.z);
-    const r = Math.max(BALL_RADIUS * p.s * 1.6, 3.5);
+    const r = Math.max(BALL_RADIUS * p.s * 1.85, 4.5);
 
-    // Halo luminoso: la bola es lo más fácil de seguir
-    const glow = ctx.createRadialGradient(p.x, p.y, r * 0.5, p.x, p.y, r * 2.8);
-    glow.addColorStop(0, 'rgba(230, 236, 60, 0.32)');
-    glow.addColorStop(1, 'rgba(230, 236, 60, 0)');
+    const glow = ctx.createRadialGradient(p.x, p.y, r * 0.5, p.x, p.y, r * 2.6);
+    glow.addColorStop(0, 'rgba(232, 238, 60, 0.35)');
+    glow.addColorStop(1, 'rgba(232, 238, 60, 0)');
     ctx.fillStyle = glow;
     ctx.beginPath();
-    ctx.arc(p.x, p.y, r * 2.8, 0, Math.PI * 2);
+    ctx.arc(p.x, p.y, r * 2.6, 0, Math.PI * 2);
     ctx.fill();
 
+    ctx.strokeStyle = OUTLINE;
+    ctx.lineWidth = Math.max(r * 0.16, 1.5);
     const g = ctx.createRadialGradient(p.x - r * 0.3, p.y - r * 0.3, r * 0.2, p.x, p.y, r);
-    g.addColorStop(0, '#fdfda0');
-    g.addColorStop(0.7, '#e3ea25');
-    g.addColorStop(1, '#c3ca16');
+    g.addColorStop(0, '#fdfda6');
+    g.addColorStop(0.65, '#e6ec2a');
+    g.addColorStop(1, '#c2c916');
     ctx.fillStyle = g;
     ctx.beginPath();
     ctx.arc(p.x, p.y, r, 0, Math.PI * 2);
     ctx.fill();
-    ctx.strokeStyle = 'rgba(255,255,255,0.6)';
-    ctx.lineWidth = Math.max(r * 0.12, 0.7);
+    ctx.stroke();
+    ctx.strokeStyle = 'rgba(255,255,255,0.7)';
+    ctx.lineWidth = Math.max(r * 0.13, 1);
     ctx.beginPath();
-    ctx.arc(p.x - r * 0.25, p.y, r * 0.82, -0.8, 0.8);
+    ctx.arc(p.x - r * 0.25, p.y, r * 0.8, -0.8, 0.8);
     ctx.stroke();
   }
 
@@ -969,11 +748,11 @@ export class Renderer {
       if (p.kind === 'ring') {
         const k = 1 - p.life / p.maxLife;
         const pr = this.project(p.x, 0, p.z);
-        const rr = (p.size + k * 0.55) * pr.s;
+        const rr = (p.size + k * 0.6) * pr.s;
         ctx.strokeStyle = `rgba(${p.color}, ${(alpha * 0.5).toFixed(3)})`;
-        ctx.lineWidth = 2;
+        ctx.lineWidth = 2.5;
         ctx.beginPath();
-        ctx.ellipse(pr.x, pr.y, rr, rr * 0.38, 0, 0, Math.PI * 2);
+        ctx.ellipse(pr.x, pr.y, rr, rr * 0.4, 0, 0, Math.PI * 2);
         ctx.stroke();
         continue;
       }
@@ -988,352 +767,321 @@ export class Renderer {
       const pr = this.project(p.x, p.y, p.z);
       ctx.fillStyle = `rgba(${p.color}, ${(alpha * 0.85).toFixed(3)})`;
       ctx.beginPath();
-      ctx.arc(pr.x, pr.y, Math.max(p.size * pr.s, 1), 0, Math.PI * 2);
+      ctx.arc(pr.x, pr.y, Math.max(p.size * pr.s, 1.2), 0, Math.PI * 2);
       ctx.fill();
     }
   }
 
   // ==========================================================================
-  // Avatares: silueta deportiva con postura atlética
+  // Avatares: personajes arcade — masas rellenas con contorno, no palitos
   // ==========================================================================
+
+  /** Cápsula con contorno y highlight: el ladrillo de los personajes. */
+  private capsule(
+    x1: number, y1: number, x2: number, y2: number,
+    w: number, fill: string, highlight = true,
+  ): void {
+    const ctx = this.ctx;
+    ctx.lineCap = 'round';
+    ctx.strokeStyle = OUTLINE;
+    ctx.lineWidth = w + Math.max(w * 0.32, 2.5);
+    ctx.beginPath();
+    ctx.moveTo(x1, y1);
+    ctx.lineTo(x2, y2);
+    ctx.stroke();
+    ctx.strokeStyle = fill;
+    ctx.lineWidth = w;
+    ctx.beginPath();
+    ctx.moveTo(x1, y1);
+    ctx.lineTo(x2, y2);
+    ctx.stroke();
+    if (highlight && w > 5) {
+      ctx.strokeStyle = 'rgba(255,255,255,0.22)';
+      ctx.lineWidth = w * 0.32;
+      const off = w * 0.2;
+      ctx.beginPath();
+      ctx.moveTo(x1 - off, y1 - off * 0.6);
+      ctx.lineTo(x2 - off, y2 - off * 0.6);
+      ctx.stroke();
+    }
+  }
 
   private drawAvatar(p: PlayerEntity, pal: Palette, facingCamera: boolean): void {
     const ctx = this.ctx;
     const base = this.project(p.x, 0, p.z);
-    const s = base.s * (facingCamera ? 1.5 : 1.22); // presencia (el lejano, aún más)
+    // Escala arcade: el personaje manda en pantalla
+    const s = base.s * (facingCamera ? 1.65 : 1.35);
     const cx = base.x;
+    const swinging = p.swingType !== null;
+    const swingK = swinging ? Math.sin(Math.min(p.swingT, 1) * Math.PI) : 0;
+    const swingDir =
+      swinging && (p.swingType === 'backhand' || p.swingType === 'volleyBh') ? -1 : 1;
+    const dirScreen = swingDir * (facingCamera ? -1 : 1);
 
-    // Sombra suave
-    const gSh = ctx.createRadialGradient(cx, base.y, 0, cx, base.y, 0.5 * s);
-    gSh.addColorStop(0, 'rgba(0, 4, 12, 0.4)');
+    // Sombra grande y clara bajo los pies
+    const gSh = ctx.createRadialGradient(cx, base.y, 0, cx, base.y, 0.55 * s);
+    gSh.addColorStop(0, 'rgba(0, 4, 12, 0.45)');
     gSh.addColorStop(1, 'rgba(0, 4, 12, 0)');
     ctx.fillStyle = gSh;
     ctx.beginPath();
-    ctx.ellipse(cx, base.y, 0.5 * s, 0.16 * s, 0, 0, Math.PI * 2);
+    ctx.ellipse(cx, base.y, 0.55 * s, 0.17 * s, 0, 0, Math.PI * 2);
     ctx.fill();
 
-    const legLen = 0.84 * s;
-    const bodyH = 0.6 * s;
-    const headR = 0.125 * s;
-    // Postura atlética: rodillas siempre algo flexionadas
-    const crouch = 0.05 * s;
+    // Proporciones arcade: cabeza grande, torso ancho, piernas con masa
+    const legLen = 0.72 * s;
+    const crouch = 0.07 * s;
     const hipY = base.y - legLen + crouch;
-    const shY = hipY - bodyH;
+    const torsoH = 0.5 * s;
+    const headR = 0.155 * s;
     let lean = p.lean * (facingCamera ? -1 : 1);
-    // Inclinación corporal dinámica durante el golpe: el cuerpo acompaña
-    if (p.swingType !== null) {
-      const swingDir =
-        (p.swingType === 'backhand' || p.swingType === 'volleyBh' ? -1 : 1) *
-        (facingCamera ? -1 : 1);
-      lean += Math.sin(Math.min(p.swingT, 1) * Math.PI) * 0.15 * swingDir;
-    }
+    if (swinging) lean += swingK * 0.22 * dirScreen;
 
-    const stride = Math.sin(p.runPhase) * 0.2 * s * p.moveAmount;
-    const kneeLift = Math.abs(Math.sin(p.runPhase)) * 0.08 * s * p.moveAmount;
-    // Pierna de apoyo marcada durante el golpe: la base se abre
-    const spread = p.swingType !== null ? 0.09 * s * (1 - Math.min(p.swingT, 1)) : 0;
+    const stride = Math.sin(p.runPhase) * 0.18 * s * p.moveAmount;
+    const lungeF = swingK * 0.14 * s; // zancada del golpe
 
-    ctx.lineCap = 'round';
-
-    // ---- Piernas: muslo + gemelo con contorno, calcetín y zapatilla ----
-    const drawLeg = (side: -1 | 1, offset: number): void => {
-      const hx = cx + side * 0.1 * s;
-      const fx = cx + side * 0.17 * s + offset + side * spread;
-      const fy = base.y - Math.abs(offset) * 0.25;
-      const kx = (hx + fx) / 2 + side * 0.045 * s;
-      const ky = (hipY + fy) / 2 + kneeLift - 0.02 * s;
-      // contorno oscuro fino (separa del suelo)
-      ctx.strokeStyle = 'rgba(9, 18, 30, 0.65)';
-      ctx.lineWidth = Math.max(0.155 * s, 4);
-      ctx.beginPath();
-      ctx.moveTo(hx, hipY + 0.08 * s);
-      ctx.lineTo(kx, ky);
-      ctx.lineTo(fx, fy - 0.1 * s);
-      ctx.stroke();
-      // muslo (más grueso)
-      ctx.strokeStyle = pal.skin;
-      ctx.lineWidth = Math.max(0.125 * s, 3);
-      ctx.beginPath();
-      ctx.moveTo(hx, hipY + 0.08 * s);
-      ctx.lineTo(kx, ky);
-      ctx.stroke();
-      // gemelo
-      ctx.lineWidth = Math.max(0.09 * s, 2.4);
-      ctx.beginPath();
-      ctx.moveTo(kx, ky);
-      ctx.lineTo(fx, fy - 0.1 * s);
-      ctx.stroke();
-      // calcetín
-      ctx.strokeStyle = '#eef2f6';
-      ctx.lineWidth = Math.max(0.085 * s, 2.2);
-      ctx.beginPath();
-      ctx.moveTo(fx, fy - 0.11 * s);
-      ctx.lineTo(fx, fy - 0.045 * s);
-      ctx.stroke();
-      // zapatilla con suela
+    // ---- Piernas: muslo + gemelo con masa, rodilla flexionada ----
+    const drawLeg = (side: -1 | 1, off: number): void => {
+      const isLunge = swinging && side === (dirScreen as -1 | 1);
+      const hx = cx + side * 0.12 * s;
+      const fx = cx + side * (0.2 * s + (isLunge ? lungeF : 0)) + off;
+      const fy = base.y - Math.abs(off) * 0.2;
+      const kx = (hx + fx) / 2 + side * 0.05 * s;
+      const ky = (hipY + fy) / 2 - 0.045 * s;
+      this.capsule(hx, hipY + 0.06 * s, kx, ky, 0.155 * s, pal.skin);
+      this.capsule(kx, ky, fx, fy - 0.09 * s, 0.115 * s, pal.skin);
+      // Zapatilla grande con suela
+      ctx.strokeStyle = OUTLINE;
+      ctx.lineWidth = 2.5;
       ctx.fillStyle = '#f4f7fa';
       ctx.beginPath();
-      ctx.ellipse(fx + side * 0.02 * s, fy - 0.03 * s, 0.115 * s, 0.05 * s, 0, 0, Math.PI * 2);
+      ctx.ellipse(fx + side * 0.04 * s, fy - 0.035 * s, 0.14 * s, 0.062 * s, 0, 0, Math.PI * 2);
       ctx.fill();
-      ctx.fillStyle = '#28303c';
+      ctx.stroke();
+      ctx.fillStyle = '#232c39';
       ctx.beginPath();
-      ctx.ellipse(fx + side * 0.02 * s, fy - 0.008 * s, 0.115 * s, 0.022 * s, 0, 0, Math.PI * 2);
+      ctx.ellipse(fx + side * 0.04 * s, fy - 0.004 * s, 0.14 * s, 0.026 * s, 0, 0, Math.PI * 2);
       ctx.fill();
     };
     drawLeg(-1, stride);
     drawLeg(1, -stride);
 
-    // ---- Pantalón corto deportivo ----
+    // ---- Pantalón con masa ----
     ctx.fillStyle = pal.shorts;
+    ctx.strokeStyle = OUTLINE;
+    ctx.lineWidth = 2.5;
     ctx.beginPath();
-    ctx.moveTo(cx - 0.19 * s, hipY - 0.1 * s);
-    ctx.lineTo(cx + 0.19 * s, hipY - 0.1 * s);
-    ctx.lineTo(cx + 0.165 * s, hipY + 0.18 * s);
-    ctx.lineTo(cx + 0.05 * s, hipY + 0.18 * s);
-    ctx.lineTo(cx, hipY + 0.08 * s);
-    ctx.lineTo(cx - 0.05 * s, hipY + 0.18 * s);
-    ctx.lineTo(cx - 0.165 * s, hipY + 0.18 * s);
+    ctx.moveTo(cx - 0.21 * s, hipY - 0.12 * s);
+    ctx.lineTo(cx + 0.21 * s, hipY - 0.12 * s);
+    ctx.lineTo(cx + 0.19 * s, hipY + 0.16 * s);
+    ctx.lineTo(cx + 0.045 * s, hipY + 0.16 * s);
+    ctx.lineTo(cx, hipY + 0.06 * s);
+    ctx.lineTo(cx - 0.045 * s, hipY + 0.16 * s);
+    ctx.lineTo(cx - 0.19 * s, hipY + 0.16 * s);
     ctx.closePath();
     ctx.fill();
+    ctx.stroke();
 
     ctx.save();
     ctx.translate(cx, hipY);
     ctx.rotate(lean);
 
-    // ---- Torso atlético: hombros anchos, cintura estrecha ----
-    const g = ctx.createLinearGradient(-0.22 * s, 0, 0.22 * s, 0);
+    // ---- Torso atlético: hombros anchos, cintura clara ----
+    const shW = 0.27 * s;
+    const waistW = 0.17 * s;
+    const torso = (): void => {
+      ctx.beginPath();
+      ctx.moveTo(-waistW, 0.02 * s);
+      ctx.quadraticCurveTo(-shW * 1.06, -torsoH * 0.55, -shW, -torsoH);
+      ctx.quadraticCurveTo(0, -torsoH - 0.07 * s, shW, -torsoH);
+      ctx.quadraticCurveTo(shW * 1.06, -torsoH * 0.55, waistW, 0.02 * s);
+      ctx.closePath();
+    };
+    const gT = ctx.createLinearGradient(-shW, 0, shW, 0);
     if (facingCamera) {
-      g.addColorStop(0, pal.shirtDark);
-      g.addColorStop(0.45, pal.shirt);
-      g.addColorStop(1, pal.shirt);
+      gT.addColorStop(0, pal.shirtDark);
+      gT.addColorStop(0.4, pal.shirt);
+      gT.addColorStop(1, shade(pal.shirt, 0.12));
     } else {
-      g.addColorStop(0, pal.shirt);
-      g.addColorStop(0.55, pal.shirt);
-      g.addColorStop(1, pal.shirtDark);
+      gT.addColorStop(0, shade(pal.shirt, 0.12));
+      gT.addColorStop(0.6, pal.shirt);
+      gT.addColorStop(1, pal.shirtDark);
     }
-    ctx.fillStyle = g;
-    // Volumen: sombra suave alrededor del torso para despegarlo de la pista
-    ctx.shadowColor = 'rgba(2, 10, 24, 0.55)';
-    ctx.shadowBlur = Math.max(0.07 * s, 3);
-    ctx.beginPath();
-    ctx.moveTo(-0.22 * s, -bodyH + 0.05 * s);
-    ctx.quadraticCurveTo(-0.24 * s, -bodyH * 0.5, -0.15 * s, 0.02 * s);
-    ctx.lineTo(0.15 * s, 0.02 * s);
-    ctx.quadraticCurveTo(0.24 * s, -bodyH * 0.5, 0.22 * s, -bodyH + 0.05 * s);
-    ctx.quadraticCurveTo(0, -bodyH - 0.05 * s, -0.22 * s, -bodyH + 0.05 * s);
-    ctx.closePath();
+    torso();
+    ctx.fillStyle = gT;
     ctx.fill();
-    ctx.shadowBlur = 0;
-    // franja lateral de la equipación
-    ctx.strokeStyle = 'rgba(255,255,255,0.28)';
-    ctx.lineWidth = Math.max(0.028 * s, 1);
-    ctx.beginPath();
-    ctx.moveTo((facingCamera ? -1 : 1) * 0.19 * s, -bodyH + 0.1 * s);
-    ctx.quadraticCurveTo((facingCamera ? -1 : 1) * 0.21 * s, -bodyH * 0.5, (facingCamera ? -1 : 1) * 0.13 * s, 0);
+    ctx.strokeStyle = OUTLINE;
+    ctx.lineWidth = 3;
+    torso();
     ctx.stroke();
+    // highlight del lado de la luz
+    ctx.strokeStyle = 'rgba(255,255,255,0.3)';
+    ctx.lineWidth = Math.max(0.035 * s, 1.5);
+    ctx.beginPath();
+    ctx.moveTo(-waistW * 0.9, 0);
+    ctx.quadraticCurveTo(-shW, -torsoH * 0.55, -shW * 0.92, -torsoH * 0.92);
+    ctx.stroke();
+    // dorsal / franja
+    ctx.fillStyle = 'rgba(255,255,255,0.85)';
+    ctx.font = `900 ${(0.16 * s).toFixed(1)}px "Segoe UI", sans-serif`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    if (!facingCamera) ctx.fillText('1', 0, -torsoH * 0.55);
+    else ctx.fillText('2', 0, -torsoH * 0.55);
 
-    // ---- Brazo libre ----
+    // ---- Brazo libre (dos segmentos) ----
     const offSide = facingCamera ? 1 : -1;
-    const armSway = -stride * 0.6;
-    ctx.strokeStyle = pal.skin;
-    ctx.lineWidth = Math.max(0.075 * s, 2);
-    ctx.beginPath();
-    ctx.moveTo(offSide * 0.19 * s, -bodyH + 0.1 * s);
-    ctx.quadraticCurveTo(
-      offSide * 0.28 * s,
-      -bodyH * 0.5,
-      offSide * 0.2 * s + armSway,
-      -0.16 * s,
-    );
-    ctx.stroke();
+    const armSway = -stride * 0.5;
+    const fShoulder = { x: offSide * shW * 0.92, y: -torsoH + 0.06 * s };
+    const fElbow = {
+      x: offSide * (shW + 0.06 * s),
+      y: -torsoH * 0.5 + swingK * 0.06 * s,
+    };
+    const fHand = { x: offSide * (shW - 0.02 * s) + armSway - swingK * 0.08 * s * dirScreen, y: -0.12 * s };
+    this.capsule(fShoulder.x, fShoulder.y, fElbow.x, fElbow.y, 0.105 * s, pal.shirt);
+    this.capsule(fElbow.x, fElbow.y, fHand.x, fHand.y, 0.085 * s, pal.skin);
 
-    // ---- Cuello y cabeza ----
-    ctx.strokeStyle = pal.skin;
-    ctx.lineWidth = Math.max(0.07 * s, 2);
-    ctx.beginPath();
-    ctx.moveTo(0, -bodyH + 0.02 * s);
-    ctx.lineTo(0, -bodyH - 0.05 * s);
-    ctx.stroke();
-    const headY = -bodyH - headR * 1.35;
+    // ---- Cuello y cabeza grande ----
+    this.capsule(0, -torsoH + 0.02 * s, 0, -torsoH - 0.07 * s, 0.085 * s, pal.skin, false);
+    const headY = -torsoH - headR * 1.15;
     ctx.fillStyle = pal.skin;
+    ctx.strokeStyle = OUTLINE;
+    ctx.lineWidth = 3;
     ctx.beginPath();
     ctx.arc(0, headY, headR, 0, Math.PI * 2);
     ctx.fill();
-    ctx.strokeStyle = 'rgba(9, 18, 30, 0.5)';
-    ctx.lineWidth = Math.max(headR * 0.13, 1);
-    ctx.beginPath();
-    ctx.arc(0, headY, headR, 0, Math.PI * 2);
     ctx.stroke();
     ctx.fillStyle = pal.hair;
     ctx.beginPath();
     if (facingCamera) {
-      ctx.arc(0, headY, headR * 1.02, Math.PI * 1.05, Math.PI * 1.95);
-      ctx.closePath();
+      ctx.arc(0, headY, headR * 1.03, Math.PI * 1.02, Math.PI * 1.98);
     } else {
-      ctx.arc(0, headY - headR * 0.05, headR * 1.02, Math.PI * 0.9, Math.PI * 2.1);
-      ctx.closePath();
+      ctx.arc(0, headY - headR * 0.04, headR * 1.03, Math.PI * 0.88, Math.PI * 2.12);
     }
+    ctx.closePath();
     ctx.fill();
+    // cinta
     ctx.strokeStyle = facingCamera ? '#f4f7fb' : '#ffd166';
-    ctx.lineWidth = Math.max(headR * 0.22, 1.2);
+    ctx.lineWidth = Math.max(headR * 0.24, 2);
     ctx.beginPath();
-    ctx.arc(0, headY, headR * 0.98, Math.PI * 1.15, Math.PI * 1.85);
+    ctx.arc(0, headY, headR * 0.96, Math.PI * 1.12, Math.PI * 1.88);
     ctx.stroke();
-    if (facingCamera && s > 26) {
+    if (facingCamera && s > 34) {
       ctx.fillStyle = '#1c222b';
       ctx.beginPath();
-      ctx.arc(-headR * 0.32, headY + headR * 0.1, headR * 0.09, 0, Math.PI * 2);
-      ctx.arc(headR * 0.32, headY + headR * 0.1, headR * 0.09, 0, Math.PI * 2);
+      ctx.arc(-headR * 0.34, headY + headR * 0.12, headR * 0.1, 0, Math.PI * 2);
+      ctx.arc(headR * 0.34, headY + headR * 0.12, headR * 0.1, 0, Math.PI * 2);
       ctx.fill();
     }
 
-    // ---- Brazo de la pala (hombro → codo → mano) ----
-    const swinging = p.swingType !== null;
+    // ---- Brazo de la pala: extendido y separado del cuerpo ----
     let armAngle: number;
     if (swinging) {
       const t = p.swingT;
       if (p.swingType !== null && isOverheadShot(p.swingType)) {
-        const range = p.swingType === 'bandeja' ? 0.85 : 1.1;
-        armAngle = -Math.PI * 0.75 + t * Math.PI * range;
+        const range = p.swingType === 'bandeja' ? 0.85 : 1.15;
+        armAngle = -Math.PI * 0.8 + t * Math.PI * range;
       } else {
-        const dir = p.swingType === 'backhand' || p.swingType === 'volleyBh' ? -1 : 1;
-        armAngle = dir * (-2.1 + t * 3.1);
+        armAngle = swingDir * (-2.2 + t * 3.4);
       }
     } else {
-      armAngle = 1.0 + armSway / Math.max(s, 1);
+      armAngle = 1.05 + armSway / Math.max(s, 1);
     }
     const armSide = facingCamera ? -1 : 1;
-    const shoulder = { x: armSide * 0.19 * s, y: -bodyH + 0.1 * s };
-    const armLen = 0.52 * s;
+    const shoulder = { x: armSide * shW * 0.95, y: -torsoH + 0.05 * s };
+    const armLen = (0.5 + swingK * 0.1) * s; // brazo extendido en el golpe
     const hand = {
       x: shoulder.x + Math.sin(armAngle) * armLen * armSide,
-      y: shoulder.y + Math.cos(armAngle) * armLen * 0.75 + 0.06 * s,
+      y: shoulder.y + Math.cos(armAngle) * armLen * 0.75 + 0.05 * s,
     };
     const mid = { x: (shoulder.x + hand.x) / 2, y: (shoulder.y + hand.y) / 2 };
     const elbow = {
-      x: mid.x + Math.cos(armAngle) * 0.09 * s * armSide,
-      y: mid.y + Math.sin(armAngle) * 0.06 * s,
+      x: mid.x + Math.cos(armAngle) * 0.08 * s * armSide * (1 - swingK * 0.7),
+      y: mid.y + Math.sin(armAngle) * 0.05 * s,
     };
 
-    // Swoosh: arco de velocidad durante el golpe
-    if (swinging && p.swingT > 0.12 && p.swingT < 0.62) {
-      const k = (p.swingT - 0.12) / 0.5;
-      const rArc = armLen * 1.15;
-      ctx.strokeStyle = `rgba(255, 255, 255, ${(0.35 * (1 - k)).toFixed(3)})`;
-      ctx.lineWidth = Math.max(0.05 * s, 2);
-      ctx.beginPath();
-      const a0 = armAngle - 0.9;
-      ctx.arc(shoulder.x, shoulder.y + 0.06 * s, rArc, (armSide > 0 ? a0 : Math.PI - armAngle) - 0.3, (armSide > 0 ? armAngle : Math.PI - a0) + 0.1);
-      ctx.stroke();
-    }
-
-    // Estela de la pala: posiciones fantasma del gesto (motion trail)
-    if (swinging && p.swingT > 0.12 && p.swingT < 0.58) {
-      const prevSign = p.swingType === 'backhand' || p.swingType === 'volleyBh' ? 1 : -1;
-      for (const [dA, alpha] of [[0.42, 0.18], [0.82, 0.08]] as const) {
+    // motion trail de pala: corto y grueso
+    if (swinging && p.swingT > 0.1 && p.swingT < 0.6) {
+      const prevSign = swingDir < 0 ? 1 : -1;
+      for (const [dA, alpha] of [[0.5, 0.22], [0.95, 0.1]] as const) {
         const gA = armAngle + prevSign * dA;
         const gh = {
           x: shoulder.x + Math.sin(gA) * armLen * armSide,
-          y: shoulder.y + Math.cos(gA) * armLen * 0.75 + 0.06 * s,
+          y: shoulder.y + Math.cos(gA) * armLen * 0.75 + 0.05 * s,
         };
-        const gRA = gA * armSide;
-        const gx = gh.x + Math.sin(gRA) * 0.18 * s;
-        const gy = gh.y + Math.cos(gRA) * 0.18 * s * 0.8;
         ctx.globalAlpha = alpha;
         ctx.fillStyle = '#ffd166';
         ctx.beginPath();
-        ctx.ellipse(gx, gy, 0.13 * s, 0.165 * s, gRA, 0, Math.PI * 2);
+        ctx.ellipse(
+          gh.x + Math.sin(gA * armSide) * 0.2 * s,
+          gh.y + Math.cos(gA * armSide) * 0.16 * s,
+          0.15 * s, 0.19 * s, gA * armSide, 0, Math.PI * 2,
+        );
         ctx.fill();
         ctx.globalAlpha = 1;
       }
     }
 
-    // contorno del brazo
-    ctx.strokeStyle = 'rgba(9, 18, 30, 0.6)';
-    ctx.lineWidth = Math.max(0.12 * s, 3.2);
+    // brazo (hombro→codo) y antebrazo (codo→mano)
+    this.capsule(shoulder.x, shoulder.y, elbow.x, elbow.y, 0.115 * s, pal.shirt);
+    this.capsule(elbow.x, elbow.y, hand.x, hand.y, 0.09 * s, pal.skin);
+    // muñequera + puño
+    ctx.fillStyle = '#f4f7fb';
+    ctx.strokeStyle = OUTLINE;
+    ctx.lineWidth = 2;
     ctx.beginPath();
-    ctx.moveTo(shoulder.x, shoulder.y);
-    ctx.quadraticCurveTo(elbow.x, elbow.y, hand.x, hand.y);
-    ctx.stroke();
-    // brazo (más grueso) y antebrazo (más fino)
-    ctx.strokeStyle = pal.skin;
-    ctx.lineWidth = Math.max(0.098 * s, 2.6);
-    ctx.beginPath();
-    ctx.moveTo(shoulder.x, shoulder.y);
-    ctx.lineTo(elbow.x, elbow.y);
-    ctx.stroke();
-    ctx.lineWidth = Math.max(0.075 * s, 2);
-    ctx.beginPath();
-    ctx.moveTo(elbow.x, elbow.y);
-    ctx.lineTo(hand.x, hand.y);
-    ctx.stroke();
-    // muñequera
-    ctx.strokeStyle = '#f4f7fb';
-    ctx.lineWidth = Math.max(0.055 * s, 1.6);
-    ctx.beginPath();
-    ctx.moveTo(hand.x - 0.03 * s, hand.y - 0.02 * s);
-    ctx.lineTo(hand.x + 0.03 * s, hand.y + 0.02 * s);
+    ctx.arc(hand.x, hand.y, 0.055 * s, 0, Math.PI * 2);
+    ctx.fill();
     ctx.stroke();
 
-    // ---- Pala: más grande, con marco y corazón ----
+    // ---- Pala grande, claramente separada de la mano ----
     const rackAngle = armAngle * armSide;
-    const rackLen = 0.18 * s;
-    const rackCx = hand.x + Math.sin(rackAngle) * rackLen;
-    const rackCy = hand.y + Math.cos(rackAngle) * rackLen * 0.8;
-    ctx.strokeStyle = '#20242c';
-    ctx.lineWidth = Math.max(0.05 * s, 1.6);
-    ctx.beginPath();
-    ctx.moveTo(hand.x, hand.y);
-    ctx.lineTo(rackCx, rackCy);
-    ctx.stroke();
-    // marco
-    ctx.fillStyle = swinging ? '#ffd166' : '#1d2530';
-    ctx.beginPath();
-    ctx.ellipse(rackCx, rackCy, 0.15 * s, 0.185 * s, rackAngle, 0, Math.PI * 2);
-    ctx.fill();
-    // cara
-    const gR = ctx.createLinearGradient(rackCx - 0.1 * s, rackCy - 0.1 * s, rackCx + 0.1 * s, rackCy + 0.1 * s);
+    const handleLen = 0.14 * s;
+    const rackCx = hand.x + Math.sin(rackAngle) * (handleLen + 0.17 * s);
+    const rackCy = hand.y + Math.cos(rackAngle) * (handleLen + 0.17 * s) * 0.85;
+    // mango visible
+    this.capsule(
+      hand.x, hand.y,
+      hand.x + Math.sin(rackAngle) * handleLen,
+      hand.y + Math.cos(rackAngle) * handleLen * 0.85,
+      0.05 * s, '#1c242f', false,
+    );
+    // marco + cara
+    ctx.strokeStyle = OUTLINE;
+    ctx.lineWidth = Math.max(0.045 * s, 2.5);
+    const gR = ctx.createLinearGradient(rackCx - 0.12 * s, rackCy - 0.12 * s, rackCx + 0.12 * s, rackCy + 0.12 * s);
     if (swinging) {
       gR.addColorStop(0, '#ffe9b0');
-      gR.addColorStop(1, '#ffc94d');
+      gR.addColorStop(1, '#ffbe3d');
     } else {
-      gR.addColorStop(0, '#e07a3f');
-      gR.addColorStop(1, '#b8541e');
+      gR.addColorStop(0, '#e8823f');
+      gR.addColorStop(1, '#b04e1a');
     }
     ctx.fillStyle = gR;
     ctx.beginPath();
-    ctx.ellipse(rackCx, rackCy, 0.113 * s, 0.148 * s, rackAngle, 0, Math.PI * 2);
+    ctx.ellipse(rackCx, rackCy, 0.145 * s, 0.185 * s, rackAngle, 0, Math.PI * 2);
     ctx.fill();
-    if (s > 30) {
+    ctx.stroke();
+    if (s > 36) {
       ctx.fillStyle = 'rgba(0,0,0,0.3)';
-      for (const [ox, oy] of [[0, 0], [-0.045, -0.055], [0.045, -0.055], [-0.045, 0.055], [0.045, 0.055], [0, -0.09], [0, 0.09]]) {
+      for (const [ox, oy] of [[0, 0], [-0.05, -0.06], [0.05, -0.06], [-0.05, 0.06], [0.05, 0.06]]) {
         ctx.beginPath();
-        ctx.arc(rackCx + ox * s, rackCy + oy * s, 0.013 * s, 0, Math.PI * 2);
+        ctx.arc(rackCx + ox * s, rackCy + oy * s, 0.015 * s, 0, Math.PI * 2);
         ctx.fill();
       }
     }
-    // flash de contacto: destello blanco en los primeros frames del golpe
+    // flash de contacto
     if (swinging && p.swingT < 0.2) {
-      const fa = (0.2 - p.swingT) * 3.2;
-      const fl = ctx.createRadialGradient(rackCx, rackCy, 0, rackCx, rackCy, 0.42 * s);
-      fl.addColorStop(0, `rgba(255, 255, 255, ${Math.min(fa, 0.75).toFixed(3)})`);
+      const fa = (0.2 - p.swingT) * 3.6;
+      const fl = ctx.createRadialGradient(rackCx, rackCy, 0, rackCx, rackCy, 0.5 * s);
+      fl.addColorStop(0, `rgba(255, 255, 255, ${Math.min(fa, 0.8).toFixed(3)})`);
       fl.addColorStop(1, 'rgba(255, 255, 255, 0)');
       ctx.fillStyle = fl;
       ctx.beginPath();
-      ctx.arc(rackCx, rackCy, 0.42 * s, 0, Math.PI * 2);
-      ctx.fill();
-    }
-    // brillo del golpe en la pala
-    if (swinging && p.swingT < 0.5) {
-      const gl = ctx.createRadialGradient(rackCx, rackCy, 0.05 * s, rackCx, rackCy, 0.32 * s);
-      gl.addColorStop(0, 'rgba(255, 230, 150, 0.4)');
-      gl.addColorStop(1, 'rgba(255, 230, 150, 0)');
-      ctx.fillStyle = gl;
-      ctx.beginPath();
-      ctx.arc(rackCx, rackCy, 0.32 * s, 0, Math.PI * 2);
+      ctx.arc(rackCx, rackCy, 0.5 * s, 0, Math.PI * 2);
       ctx.fill();
     }
 
     ctx.restore();
+    ctx.textAlign = 'start';
   }
 }
