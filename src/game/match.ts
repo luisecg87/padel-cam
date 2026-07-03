@@ -231,6 +231,8 @@ export class MatchMode {
     const entity = server === 'player' ? this.player : this.cpu;
     entity.startSwing('serve');
     sfx.hit('serve');
+    // El saque también golpea de verdad: mismo lenguaje visual que un golpe en juego
+    this.opts.renderer.burst(from, '255, 235, 130', 6, 2.2);
     this.logger.logShot({
       by: server, type: 'serve', quality, timing: 0,
       x: entity.x, z: entity.z, afterWall: false,
@@ -484,11 +486,33 @@ export class MatchMode {
         this.goodRun = 0;
         ui.setFire(0);
       }
+      this.showShotFeedback(quality, timing, swing.form);
     }
 
     const aim = this.aimFor(type, swing.dir);
     if (side === 'cpu') aim.z = COURT.length - aim.z; // apunta al campo del jugador cercano
     this.executeHit(side, type, quality, aim, timing, speedMul);
+  }
+
+  /**
+   * Lectura de técnica compacta con los datos que el gameplay ya calcula
+   * para ese golpe (calidad, timing, y postura/potencia si viene de
+   * cámara). No introduce ninguna métrica nueva.
+   */
+  private showShotFeedback(quality: number, timing: number, form: SwingForm | undefined): void {
+    if (quality > 0.85) {
+      ui.setShotFeedback('✨ Timing perfecto', 'good');
+    } else if (timing > 0.5) {
+      ui.setShotFeedback('Llegaste tarde', 'warn');
+    } else if (timing < -0.5) {
+      ui.setShotFeedback('Golpe adelantado', 'warn');
+    } else if (form && form.posture < 0.6) {
+      ui.setShotFeedback('Postura mejorable', 'warn');
+    } else if (quality > 0.6) {
+      ui.setShotFeedback('Buen golpe', 'good');
+    } else if (quality < 0.35) {
+      ui.setShotFeedback('Impacto flojo', 'bad');
+    }
   }
 
   /** Objetivo del golpe según su tipo (z bajo = profundo en campo CPU). */
@@ -541,9 +565,13 @@ export class MatchMode {
     entity.startSwing(type);
 
     sfx.hit(type);
-    this.opts.renderer.burst(this.ball.pos, '255, 235, 130', 6, 2.4);
+    // El impacto visual acompaña la calidad real del golpe del jugador:
+    // un golpe perfecto se siente más jugoso, uno flojo pasa discreto.
+    const punch = side === 'player' ? clamp(quality, 0.35, 1) : 0.75;
+    this.opts.renderer.burst(this.ball.pos, '255, 235, 130', Math.round(4 + punch * 5), 1.8 + punch * 1.2);
     if (type === 'smash') this.opts.renderer.shake(7);
     else if (type === 'vibora') this.opts.renderer.shake(5);
+    else if (side === 'player' && quality > 0.85) this.opts.renderer.shake(3);
 
     this.logger.logShot({
       by: side, type, quality, timing,

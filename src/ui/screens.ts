@@ -59,6 +59,7 @@ class UI {
   onChallengeAgain: (() => void) | null = null;
 
   private toastTimer: number | null = null;
+  private shotChipTimer: number | null = null;
   private tourneyPhase: TourneyPhase = 'play';
 
   init(): void {
@@ -232,6 +233,19 @@ class UI {
 
   setReplay(v: boolean): void {
     $('#replayBadge').classList.toggle('show', v);
+  }
+
+  /**
+   * Lectura de técnica breve tras un golpe del jugador (timing/postura/
+   * calidad ya calculados por el gameplay): "Buen timing", "Postura
+   * mejorable"... No es un sistema nuevo, solo expone datos existentes.
+   */
+  setShotFeedback(text: string, level: 'good' | 'warn' | 'bad'): void {
+    const el = $('#shotChip');
+    el.textContent = text;
+    el.className = `show ${level}`;
+    if (this.shotChipTimer !== null) clearTimeout(this.shotChipTimer);
+    this.shotChipTimer = window.setTimeout(() => el.classList.remove('show'), 850);
   }
 
   /** Racha de buenos golpes: 🔥 visible a partir de 3 seguidos. */

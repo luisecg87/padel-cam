@@ -110,7 +110,8 @@ export class Renderer {
     // Encuadre arcade: el campo cercano llena la parte baja de la pantalla
     const portrait = this.H > this.W * 1.2;
     if (portrait) {
-      this.f = Math.min(this.H * 0.55, this.W * 1.25);
+      // Fullscreen móvil: el campo cercano corre hasta el borde inferior
+      this.f = Math.min(this.H * 0.73, this.W * 1.62);
       this.horizonY = this.H * 0.35;
     } else {
       this.f = Math.min(this.H * 0.84, this.W * 0.62);
@@ -369,10 +370,13 @@ export class Renderer {
     this.groundPoly([
       [-10, -1.5],
       [10, -1.5],
-      [10, L + 2],
-      [-10, L + 2],
+      [10, L + 3],
+      [-10, L + 3],
     ]);
-    ctx.fillStyle = '#081120';
+    const gDeck = ctx.createLinearGradient(0, this.horizonY, 0, this.H);
+    gDeck.addColorStop(0, '#0a1424');
+    gDeck.addColorStop(1, '#122341');
+    ctx.fillStyle = gDeck;
     ctx.fill();
 
     // Suelo: masa lejana fría → masa cercana iluminada
@@ -682,13 +686,15 @@ export class Renderer {
 
     // Estela corta y deportiva
     const tr = ball.trail;
+    const speed = Math.hypot(ball.vel.x, ball.vel.y, ball.vel.z);
+    const speedK = Math.max(0.6, Math.min(speed / 13, 1.6)); // bola rápida = estela potente
     if (tr.length >= 2) {
       for (let i = Math.max(1, tr.length - 6); i < tr.length; i++) {
         const a = this.project(tr[i - 1].x, tr[i - 1].y, tr[i - 1].z);
         const b = this.project(tr[i].x, tr[i].y, tr[i].z);
         const k = (i - (tr.length - 6)) / 6;
-        ctx.strokeStyle = `rgba(222, 230, 40, ${(k * 0.35).toFixed(3)})`;
-        ctx.lineWidth = Math.max(BALL_RADIUS * b.s * 1.7 * k, 1.5);
+        ctx.strokeStyle = `rgba(222, 230, 40, ${(k * 0.28 * speedK).toFixed(3)})`;
+        ctx.lineWidth = Math.max(BALL_RADIUS * b.s * 1.7 * k * speedK, 1.5);
         ctx.lineCap = 'round';
         ctx.beginPath();
         ctx.moveTo(a.x, a.y);
