@@ -92,6 +92,11 @@ export class Renderer {
   // encuadre estrecho de un móvil, sin tener que alejar la cámara ni
   // encoger la pista verticalmente.
   private hScale = 1;
+  // Paneo horizontal de cámara: sigue al jugador cercano cuando se va a un
+  // lateral (p.ej. posición de saque), para que nunca salga del encuadre
+  // sin tener que exagerar la compresión general de la escena.
+  private panFactor = 0;
+  private camX = 0;
   private shakeMag = 0;
   private particles: Particle[] = [];
   private lastDrawT = 0;
@@ -136,10 +141,12 @@ export class Renderer {
       this.f = Math.min(this.H * 0.6, this.W * 1.3);
       this.horizonY = this.H * 0.34;
       this.hScale = 0.74;
+      this.panFactor = 0.6;
     } else {
       this.f = Math.min(this.H * 0.84, this.W * 0.62);
       this.horizonY = this.H * 0.3;
       this.hScale = 1;
+      this.panFactor = 0.2;
     }
     const g = this.ctx.createRadialGradient(
       this.W / 2, this.H * 0.58, Math.min(this.W, this.H) * 0.42,
@@ -155,7 +162,7 @@ export class Renderer {
     const d = Math.max(CAM_Z - z, 0.5);
     const s = this.f / d;
     return {
-      x: this.W / 2 + x * s * this.hScale,
+      x: this.W / 2 + (x - this.camX) * s * this.hScale,
       y: this.horizonY + (CAM_H - y) * s,
       s,
     };
@@ -203,6 +210,11 @@ export class Renderer {
     const now = performance.now();
     const dt = this.lastDrawT ? Math.min((now - this.lastDrawT) / 1000, 0.05) : 0.016;
     this.lastDrawT = now;
+
+    // La cámara sigue suavemente al jugador cercano en horizontal para que
+    // nunca quede fuera de encuadre en los laterales (p.ej. al sacar).
+    const camTarget = player.x * this.panFactor;
+    this.camX += (camTarget - this.camX) * Math.min(dt * 3.5, 1);
 
     const ctx = this.ctx;
     ctx.save();
@@ -902,11 +914,11 @@ export class Renderer {
     const hipY = base.y - legLen + crouch;
     const torsoH = 0.5 * s;
     const headR = 0.155 * s;
-    // Sesgo 3/4: el jugador cercano nunca queda perfectamente cuadrado a
-    // cámara (lo que se leía como "totalmente de espaldas"); un giro fijo
-    // y sutil da lectura corporal (hombro y torso ligeramente en diagonal).
-    const threeQuarter = facingCamera ? 0 : 0.1;
-    let lean = p.lean * (facingCamera ? -1 : 1) + threeQuarter;
+    // Sin sesgo fijo: si la cámara está detrás, el jugador queda cuadrado a
+    // cámara en reposo (hombros simétricos, de espalda real). La lectura
+    // de hacia dónde juega viene del giro real de hombros al preparar/
+    // golpear (más abajo), nunca de un giro artificial constante.
+    let lean = p.lean * (facingCamera ? -1 : 1);
     if (swinging) lean += swingK * 0.22 * dirScreen;
     // Torso gira hacia el lado anticipado al prepararse (hombro acompaña)
     else lean += prepBlend * 0.13 * prepSide * (facingCamera ? -1 : 1);
@@ -999,6 +1011,25 @@ export class Renderer {
     ctx.moveTo(-waistW * 0.9, 0);
     ctx.quadraticCurveTo(-shW, -torsoH * 0.55, -shW * 0.92, -torsoH * 0.92);
     ctx.stroke();
+    if (!facingCamera) {
+      // Espalda atlética: canal de la columna + omóplatos sutiles. Da
+      // volumen y orientación (hacia dónde mira el jugador) sin recurrir a
+      // ninguna cara: es lectura de espalda pura.
+      ctx.strokeStyle = 'rgba(0,0,0,0.16)';
+      ctx.lineWidth = Math.max(0.022 * s, 1.2);
+      ctx.beginPath();
+      ctx.moveTo(0, -torsoH * 0.85);
+      ctx.quadraticCurveTo(waistW * 0.06, -torsoH * 0.4, 0, 0);
+      ctx.stroke();
+      ctx.strokeStyle = 'rgba(255,255,255,0.14)';
+      ctx.lineWidth = Math.max(0.03 * s, 1.4);
+      for (const sgn of [-1, 1] as const) {
+        ctx.beginPath();
+        ctx.moveTo(sgn * waistW * 0.35, -torsoH * 0.15);
+        ctx.quadraticCurveTo(sgn * shW * 0.7, -torsoH * 0.5, sgn * shW * 0.55, -torsoH * 0.82);
+        ctx.stroke();
+      }
+    }
     // dorsal / franja
     ctx.fillStyle = 'rgba(255,255,255,0.85)';
     ctx.font = `900 ${(0.16 * s).toFixed(1)}px "Segoe UI", sans-serif`;
@@ -1026,7 +1057,9 @@ export class Renderer {
       y: -torsoH * 0.5 + swingK * 0.06 * s,
     };
     const fBlend = swinging ? 1 : prepBlend;
-    const readyFHand = { x: offSide * shW * 0.3, y: -torsoH * 0.52 };
+    // En reposo, la mano libre se acerca a la garganta de la pala (agarre a
+    // dos manos de espera), casi centrada, no abierta hacia el lado.
+    const readyFHand = { x: offSide * shW * 0.14, y: -torsoH * 0.34 };
     let activeFHand: { x: number; y: number };
     if (isBackhandSwing) {
       // Agarre a dos manos: la mano libre viaja junto al mango de la pala
@@ -1062,37 +1095,25 @@ export class Renderer {
     ctx.fillStyle = pal.hair;
     ctx.beginPath();
     if (facingCamera) {
+      // Vista frontal (rival lejano): el pelo es un flequillo, se ve cara.
       ctx.arc(0, headY, headR * 1.03, Math.PI * 1.02, Math.PI * 1.98);
     } else {
-      // 3/4 trasero: el pelo deja un hueco más amplio de un lado (la
-      // cabeza girada hacia la bola/red), revelando mejilla y una oreja,
-      // en vez de cubrir la cabeza entera como una espalda plana.
-      ctx.arc(0, headY - headR * 0.04, headR * 1.03, Math.PI * 0.82, Math.PI * 1.86);
+      // Vista trasera real (jugador cercano, cámara detrás): se ve la
+      // nuca. Sin hueco, sin mejilla, sin oreja — pura silueta de espalda.
+      ctx.arc(0, headY, headR * 1.05, 0, Math.PI * 2);
     }
     ctx.closePath();
     ctx.fill();
-    // cinta
+    // cinta (visible desde cualquier ángulo, rodea la cabeza)
     ctx.strokeStyle = facingCamera ? '#f4f7fb' : '#ffd166';
     ctx.lineWidth = Math.max(headR * 0.24, 2);
     ctx.beginPath();
-    ctx.arc(0, headY, headR * 0.96, Math.PI * 1.12, Math.PI * 1.88);
-    ctx.stroke();
-    if (!facingCamera) {
-      // Oreja + sombra de mejilla del lado revelado: da volumen de cara
-      // sin necesitar un ojo completo (el jugador mira hacia la red).
-      ctx.fillStyle = pal.skin;
-      ctx.beginPath();
-      ctx.ellipse(headR * 0.78, headY + headR * 0.1, headR * 0.16, headR * 0.24, 0, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.strokeStyle = OUTLINE;
-      ctx.lineWidth = 1.2;
-      ctx.stroke();
-      ctx.strokeStyle = 'rgba(0,0,0,0.12)';
-      ctx.lineWidth = Math.max(headR * 0.06, 1);
-      ctx.beginPath();
-      ctx.arc(headR * 0.45, headY + headR * 0.18, headR * 0.4, Math.PI * 0.05, Math.PI * 0.4);
-      ctx.stroke();
+    if (facingCamera) {
+      ctx.arc(0, headY, headR * 0.96, Math.PI * 1.12, Math.PI * 1.88);
+    } else {
+      ctx.arc(0, headY, headR * 0.98, Math.PI * 0.08, Math.PI * 0.92);
     }
+    ctx.stroke();
     if (facingCamera && s > 34) {
       ctx.fillStyle = '#1c222b';
       ctx.beginPath();
@@ -1128,20 +1149,21 @@ export class Renderer {
       // Preparación: se lleva hacia atrás en el lado anticipado (derecha) o
       // cruza delante del cuerpo hacia el lado contrario (revés), según el
       // lado continuo `prepSide` (+1 derecha .. -1 revés).
-      const READY_ANGLE = 0.3;
-      const PREP_ANGLE = 1.05;
+      const READY_ANGLE = 0.22;
+      const PREP_ANGLE = 1.1;
       armAngle = lerp(READY_ANGLE, PREP_ANGLE, prepBlend) * (prepBlend > 0 ? prepSide : 1);
       const readyHand = {
-        x: armSide * shW * 0.62, // delante del cuerpo, sin tapar el dorsal
-        y: -torsoH * 0.3, // altura de cintura/pecho bajo: posición de espera real
+        x: armSide * shW * 0.3, // casi centrada delante del cuerpo, no pegada a un lado
+        y: -torsoH * 0.34, // altura de cintura/pecho bajo: posición de espera real
       };
+      // Derecha: el ángulo ya lleva la pala hacia atrás del lado dominante.
+      // Revés: el propio ángulo (signo prepSide) cruza la pala delante del
+      // cuerpo hacia el lado contrario — sin tirón extra que la saque fuera
+      // de la silueta ni la esconda detrás del cuerpo.
       const prepHand = {
         x: shoulder.x + Math.sin(armAngle) * armLen * armSide,
         y: shoulder.y + Math.cos(armAngle) * armLen * 0.75 + 0.05 * s,
       };
-      // Revés: cruza delante del cuerpo hacia el lado contrario
-      const crossPull = Math.max(0, -prepSide) * prepBlend * armLen * 0.85;
-      prepHand.x -= crossPull;
       hand = {
         x: lerp(readyHand.x, prepHand.x, prepBlend),
         y: lerp(readyHand.y, prepHand.y, prepBlend),
