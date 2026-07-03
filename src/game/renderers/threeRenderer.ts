@@ -32,16 +32,22 @@ interface Particle {
 
 interface AvatarRig {
   group: THREE.Group;
+  upperBody: THREE.Group;
   paddleArm: THREE.Group;
   freeArm: THREE.Group;
   leftLeg: THREE.Group;
   rightLeg: THREE.Group;
+  paddleGroup: THREE.Group;
   paddleHead: THREE.Mesh;
   bodyMats: THREE.MeshStandardMaterial[];
   impactFlash: THREE.Sprite;
   ghosts: THREE.Sprite[];
   groundShadow: THREE.Mesh;
   wasContact: boolean;
+  // Anticipación (solo lectura visual, igual criterio que el canvas):
+  // da la fase de "preparación" antes de que el swing arranque de verdad.
+  prepBlend: number;
+  prepSide: number;
 }
 
 /**
@@ -141,10 +147,15 @@ export class ThreeRenderer implements GameRenderer {
 
     this.playerRig = this.buildAvatar(PLAYER_PALETTE);
     this.cpuRig = this.buildAvatar(this.cpuPalette);
+    // Sobre-escala arcade del rival: a distancia real (perspectiva pura)
+    // se lee pequeño y poco expresivo, sobre todo en móvil. Igual criterio
+    // que el canvas, que también agranda al rival más que al jugador
+    // cercano (facingCamera ? 1.4 : 1.3 en render.ts) en vez de dejarlo al
+    // tamaño "correcto" que daría la cámara.
+    this.cpuRig.group.scale.setScalar(1.3);
     this.scene.add(this.playerRig.group, this.cpuRig.group);
 
     this.scene.add(this.zoneGroup);
-
 
     this.resize();
     window.addEventListener('resize', () => this.resize());
@@ -199,8 +210,8 @@ export class ThreeRenderer implements GameRenderer {
     const now = this.clock.elapsedTime;
 
     this.updateCamera(player, dt);
-    this.updateAvatar(this.playerRig, player, false, dt);
-    this.updateAvatar(this.cpuRig, cpu, true, dt);
+    this.updateAvatar(this.playerRig, player, false, ball, dt);
+    this.updateAvatar(this.cpuRig, cpu, true, ball, dt);
     this.updateBall(ball, showBall);
     this.updateParticles(dt);
     this.updateZones();
@@ -391,14 +402,25 @@ export class ThreeRenderer implements GameRenderer {
   private buildBall(): { mesh: THREE.Mesh; glow: THREE.PointLight; shadow: THREE.Mesh } {
     const mesh = new THREE.Mesh(
       new THREE.SphereGeometry(0.12, 16, 16),
-      new THREE.MeshStandardMaterial({ color: 0xe4ec3a, emissive: 0xc7d61a, emissiveIntensity: 0.75, roughness: 0.4 }),
+      new THREE.MeshStandardMaterial({ color: 0xe4ec3a, emissive: 0xc7d61a, emissiveIntensity: 0.95, roughness: 0.35 }),
     );
     // Sobre-escala puramente visual (igual que hace el canvas): la bola
     // física sigue teniendo el radio real del juego, solo se DIBUJA más
-    // grande para que se lea con claridad en pantallas pequeñas.
-    mesh.scale.setScalar(1.55);
+    // grande para que se lea con claridad en pantallas pequeñas. Más
+    // grande que en el spike 2 (1.55 -> 1.85): en la posición "en mano"
+    // antes de sacar, muy cerca de la cadera del jugador, se perdía
+    // contra el cuerpo.
+    mesh.scale.setScalar(1.85);
     this.scene.add(mesh);
-    const glow = new THREE.PointLight(0xe8ee6a, 1.6, 5, 2);
+    // Halo suave alrededor de la bola: la separa visualmente de lo que
+    // tenga detrás (torso, pista) igual que hacen los focos del estadio,
+    // en vez de depender solo de la luz puntual para destacar.
+    const haloSprite = new THREE.Sprite(new THREE.SpriteMaterial({
+      map: ThreeRenderer.glowTex, color: 0xf4f79a, transparent: true, opacity: 0.55, depthWrite: false,
+    }));
+    haloSprite.scale.set(0.55, 0.55, 1);
+    mesh.add(haloSprite);
+    const glow = new THREE.PointLight(0xe8ee6a, 2.1, 5.5, 2);
     mesh.add(glow);
     const shadow = new THREE.Mesh(
       new THREE.CircleGeometry(0.22, 16),
@@ -437,17 +459,21 @@ export class ThreeRenderer implements GameRenderer {
 
     const HIP_Y = 0.92;
 
-    // Piernas: cápsulas verticales colgando de la cadera. El pivote vive
-    // en la cadera misma (no desplazado) para que la pierna toque el
-    // pantalón sin dejar un hueco flotante entre torso y piernas.
-    const legGeo = new THREE.CapsuleGeometry(0.09, 0.62, 4, 8);
+    // Piernas: cápsulas verticales colgando de la cadera, más separadas
+    // que en la v1 (0.12 -> 0.19) y con flexión de rodilla base más
+    // marcada (ver updateAvatar) para una base atlética real, no un
+    // "poste" con dos cilindros pegados.
+    const legGeo = new THREE.CapsuleGeometry(0.095, 0.6, 4, 8);
     const makeLeg = (side: -1 | 1): THREE.Group => {
       const g = new THREE.Group();
-      g.position.set(side * 0.12, HIP_Y, 0);
+      g.position.set(side * 0.19, HIP_Y, 0);
       const mesh = new THREE.Mesh(legGeo, skinMat);
-      mesh.position.y = -0.4;
-      const shoe = new THREE.Mesh(new THREE.BoxGeometry(0.14, 0.08, 0.24), new THREE.MeshStandardMaterial({ color: 0xf4f7fa }));
-      shoe.position.set(0, -0.84, 0.03);
+      mesh.position.y = -0.39;
+      // Zapatilla más ancha y con leve giro hacia fuera: lee como apoyo
+      // real en el suelo, no como la punta redondeada de un cilindro.
+      const shoe = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.085, 0.27), new THREE.MeshStandardMaterial({ color: 0xf4f7fa }));
+      shoe.position.set(side * 0.015, -0.82, 0.04);
+      shoe.rotation.y = side * 0.12;
       g.add(mesh, shoe);
       return g;
     };
@@ -455,81 +481,106 @@ export class ThreeRenderer implements GameRenderer {
     const rightLeg = makeLeg(1);
     group.add(leftLeg, rightLeg);
 
+    // Torso hacia arriba (torso, pantalón, cabeza, brazos, pala) vive en
+    // un pivote propio a la altura de la cadera, con una inclinación
+    // hacia delante constante — así el jugador se dobla desde la cintura
+    // como en una postura de espera real, sin desanclar los pies del
+    // suelo (que siguen verticales, fuera de este grupo).
+    const upperBody = new THREE.Group();
+    upperBody.position.set(0, HIP_Y, 0);
+    upperBody.rotation.x = 0.16; // inclinación atlética hacia delante
+    group.add(upperBody);
+
     // Torso: cápsula ancha
     const torso = new THREE.Mesh(new THREE.CapsuleGeometry(0.22, 0.32, 4, 10), shirtMat);
-    torso.position.set(0, HIP_Y + 0.36, 0);
+    torso.position.set(0, 0.36, 0);
     torso.scale.set(1.15, 1, 0.75);
-    group.add(torso);
+    upperBody.add(torso);
 
     // Pantalón corto
     const shorts = new THREE.Mesh(new THREE.CapsuleGeometry(0.2, 0.08, 4, 8), shortsMat);
-    shorts.position.set(0, HIP_Y + 0.05, 0);
+    shorts.position.set(0, 0.05, 0);
     shorts.scale.set(1.1, 1, 0.8);
-    group.add(shorts);
+    upperBody.add(shorts);
 
     // Cabeza + pelo (cubre toda la nuca: vista trasera real, sin cara)
     const headGroup = new THREE.Group();
-    headGroup.position.set(0, HIP_Y + 0.74, 0);
+    headGroup.position.set(0, 0.74, 0);
     const head = new THREE.Mesh(new THREE.SphereGeometry(0.13, 14, 14), skinMat);
     const hair = new THREE.Mesh(new THREE.SphereGeometry(0.135, 14, 14, 0, Math.PI * 2, 0, Math.PI * 0.62), hairMat);
     hair.position.y = 0.015;
     headGroup.add(head, hair);
-    group.add(headGroup);
+    upperBody.add(headGroup);
 
     // Brazo libre y brazo de la pala: la posición de reposo asume diestro
     // (pala en +X) como geometría de construcción, pero updateAvatar
     // reposiciona ambos hombros (position.x) cada fotograma según
     // p.dominantHand — así el mismo rig sirve para ambas lateralidades sin
     // duplicar geometría ni tener que reconstruir el avatar al vuelo.
-    const armGeo = new THREE.CapsuleGeometry(0.055, 0.32, 4, 8);
+    // Hombros más separados que en la v1 (0.3 -> 0.34) para que los
+    // brazos no queden pegados al torso.
+    const armGeo = new THREE.CapsuleGeometry(0.058, 0.3, 4, 8);
+    const handGeo = new THREE.SphereGeometry(0.065, 10, 8);
     const freeArm = new THREE.Group();
-    freeArm.position.set(-0.3, HIP_Y + 0.6, 0);
+    freeArm.position.set(-0.34, 0.6, 0);
     const freeArmMesh = new THREE.Mesh(armGeo, shirtMat);
-    freeArmMesh.position.y = -0.17;
-    freeArm.add(freeArmMesh);
-    group.add(freeArm);
+    freeArmMesh.position.y = -0.16;
+    const freeHand = new THREE.Mesh(handGeo, skinMat);
+    freeHand.position.y = -0.34;
+    freeArm.add(freeArmMesh, freeHand);
+    upperBody.add(freeArm);
 
     // Brazo de la pala: pivote en el hombro, rota según prep/swing
     const paddleArm = new THREE.Group();
-    paddleArm.position.set(0.3, HIP_Y + 0.6, 0);
+    paddleArm.position.set(0.34, 0.6, 0);
     const paddleArmMesh = new THREE.Mesh(armGeo, shirtMat);
-    paddleArmMesh.position.y = -0.17;
-    paddleArm.add(paddleArmMesh);
-    group.add(paddleArm);
+    paddleArmMesh.position.y = -0.16;
+    const paddleHand = new THREE.Mesh(handGeo, skinMat);
+    paddleHand.position.y = -0.32;
+    paddleArm.add(paddleArmMesh, paddleHand);
+    upperBody.add(paddleArm);
 
-    // Pala: esfera achatada en vez de disco fino. Un disco (cilindro muy
-    // delgado) se vuelve casi invisible cuando el brazo lo pone de canto
-    // a cámara (justo lo que pasa a media parte del swing) — un volumen
-    // esférico aplastado, en cambio, SIEMPRE muestra una sección de color
-    // sea cual sea el ángulo, así que no "desaparece" durante el golpe.
+    // Pala: grupo propio al final del brazo, inclinado hacia fuera para
+    // que se separe visualmente del cuerpo en vez de quedar plana contra
+    // el torso ("pegada y flotante" reportado). Esfera achatada en vez
+    // de disco fino: un disco muy delgado se vuelve casi invisible de
+    // canto (justo lo que pasa a media parte del swing); una esfera
+    // aplastada siempre muestra una sección de color sea cual sea el
+    // ángulo, así que no "desaparece" durante el golpe.
+    const paddleGroup = new THREE.Group();
+    paddleGroup.position.set(0, -0.34, 0);
+    paddleGroup.rotation.set(0.25, 0, 0.55); // inclinación fija hacia fuera/abajo
     const paddleRim = new THREE.Mesh(
-      new THREE.SphereGeometry(0.2, 16, 12),
+      new THREE.SphereGeometry(0.23, 16, 12),
       new THREE.MeshStandardMaterial({ color: 0x14202f, roughness: 0.6 }),
     );
     paddleRim.scale.set(1, 1, 0.4);
-    paddleRim.position.set(0, -0.44, 0.005);
+    paddleRim.position.set(0, -0.13, 0.01);
     const paddleHead = new THREE.Mesh(
-      new THREE.SphereGeometry(0.16, 16, 12),
+      new THREE.SphereGeometry(0.185, 16, 12),
       new THREE.MeshStandardMaterial({ color: 0xff9a4d, emissive: 0xb44f10, emissiveIntensity: 0.9, roughness: 0.3 }),
     );
     paddleHead.scale.set(1, 1, 0.45);
-    paddleHead.position.set(0, -0.44, 0.02);
+    paddleHead.position.set(0, -0.13, 0.04);
     const handle = new THREE.Mesh(
-      new THREE.CylinderGeometry(0.024, 0.024, 0.16, 8),
+      new THREE.CylinderGeometry(0.026, 0.026, 0.16, 8),
       new THREE.MeshStandardMaterial({ color: 0x1c242f }),
     );
-    handle.position.set(0, -0.34, 0);
-    paddleArm.add(handle, paddleRim, paddleHead);
-
-    group.add(paddleArm);
+    handle.position.set(0, -0.03, 0);
+    paddleGroup.add(handle, paddleRim, paddleHead);
+    paddleArm.add(paddleGroup);
 
     // Destello de impacto: sprite oculto que se enciende justo al golpear
     // (mismo criterio que el canvas: swingT cerca de 0 durante el golpe).
+    // Va directo a la escena (espacio mundo): iba colgado del avatar,
+    // que ya tiene su propia posición/rotación, así que la posición
+    // mundial que se le asigna cada fotograma quedaba doblemente
+    // transformada y el destello aparecía descolocado.
     const impactFlash = new THREE.Sprite(new THREE.SpriteMaterial({
       map: ThreeRenderer.glowTex, color: 0xffffff, transparent: true, opacity: 0, depthWrite: false,
     }));
     impactFlash.scale.set(0.01, 0.01, 1);
-    group.add(impactFlash);
+    this.scene.add(impactFlash);
 
     // Estela de la pala durante el golpe: 2 "fantasmas" que van dejando
     // rastro de las últimas posiciones — da lectura de dirección/velocidad
@@ -546,7 +597,7 @@ export class ThreeRenderer implements GameRenderer {
     // Sombra de contacto bajo los pies: separa la silueta del jugador de
     // la pista (grounding), igual función que la sombra de la bola.
     const groundShadow = new THREE.Mesh(
-      new THREE.CircleGeometry(0.34, 20),
+      new THREE.CircleGeometry(0.36, 20),
       new THREE.MeshBasicMaterial({ color: 0x000000, transparent: true, opacity: 0.32 }),
     );
     groundShadow.rotation.x = -Math.PI / 2;
@@ -555,20 +606,41 @@ export class ThreeRenderer implements GameRenderer {
 
     return {
       group,
+      upperBody,
       paddleArm,
       freeArm,
       leftLeg,
       rightLeg,
+      paddleGroup,
       paddleHead,
       bodyMats: [skinMat, shirtMat, shortsMat, hairMat],
       impactFlash,
       ghosts,
       groundShadow,
       wasContact: false,
+      prepBlend: 0,
+      prepSide: 1,
     };
   }
 
-  private updateAvatar(rig: AvatarRig, p: PlayerEntity, isCpu: boolean, dt: number): void {
+  /**
+   * Deriva hacia qué lado y con cuánta antelación debería prepararse el
+   * jugador a partir de la posición/velocidad real de la bola (solo
+   * lectura visual, no toca ningún estado de gameplay). Mismo criterio
+   * que usa el canvas (render.ts) para su fase de "preparación".
+   */
+  private anticipate(p: PlayerEntity, ball: Ball, isCpu: boolean): { blend: number; side: number } {
+    if (!ball.active) return { blend: 0, side: 0 };
+    const incoming = isCpu ? ball.vel.z < -0.4 : ball.vel.z > 0.4;
+    if (!incoming) return { blend: 0, side: 0 };
+    const dz = Math.abs(ball.pos.z - p.z);
+    const blend = Math.min(Math.max(1 - dz / 10, 0), 0.85);
+    const dx = ball.pos.x - p.x;
+    const side = (isCpu ? -dx : dx) >= 0 ? 1 : -1;
+    return { blend, side };
+  }
+
+  private updateAvatar(rig: AvatarRig, p: PlayerEntity, isCpu: boolean, ball: Ball, dt: number): void {
     rig.group.position.set(p.x, 0, p.z);
     // El jugador cercano da la espalda a cámara (juega hacia -z, el rival
     // juega hacia +z): rotación base fija según el lado, sin "frente falso".
@@ -591,69 +663,107 @@ export class ThreeRenderer implements GameRenderer {
     // es gameplay y no se toca aquí, solo qué brazo se dibuja).
     const handSign = p.dominantHand === 'left' ? 1 : -1;
 
-    // Giro de hombros: deliberadamente MODESTO. Con la cámara casi en el
-    // eje de espaldas del jugador, un giro de cuerpo grande termina
+    // Preparación: igual que el canvas, blend/side se derivan de la bola
+    // real y se suavizan; side solo se reevalúa cerca de blend bajo para
+    // no producir una pala "a medio cruzar" que no se lea como nada.
+    const ease = Math.min(dt * 7, 1);
+    if (swinging) {
+      rig.prepBlend += (1 - rig.prepBlend) * ease;
+      rig.prepSide = swingDir;
+    } else {
+      const ant = this.anticipate(p, ball, isCpu);
+      rig.prepBlend += (ant.blend - rig.prepBlend) * ease;
+      if (rig.prepBlend < 0.2 && ant.blend > 0.05) rig.prepSide = ant.side;
+    }
+    const prepSideSigned = rig.prepSide >= 0 ? 1 : -1;
+
+    // Giro de hombros/torso: deliberadamente MODESTO y solo en upperBody
+    // (las piernas no giran con él). Con la cámara casi en el eje de
+    // espaldas del jugador, un giro grande de todo el cuerpo termina
     // apuntando el brazo de la pala hacia/desde la cámara (foreshortening)
     // y lo hace desaparecer — por eso en la v1 del spike la pala "no se
-    // veía" durante el golpe. La lectura del golpe la da el brazo (abajo),
-    // no una rotación grande de todo el cuerpo.
-    const turn = swinging ? swingK * 0.22 * swingDir * handSign : 0;
-    rig.group.rotation.y = baseFacing + turn * (isCpu ? -1 : 1);
+    // veía" durante el golpe. Fuera del golpe, un giro sutil ya orienta
+    // el torso hacia el lado anticipado ("mirar hacia la bola").
+    const turn = swinging
+      ? swingK * 0.22 * swingDir * handSign
+      : rig.prepBlend * 0.14 * prepSideSigned * handSign;
+    rig.group.rotation.y = baseFacing;
+    rig.upperBody.rotation.y = turn * (isCpu ? -1 : 1);
 
     // Ligero balanceo de respiración/espera para que no parezca estático.
     const idleBob = Math.sin(performance.now() / 480 + (isCpu ? 2 : 0)) * 0.012;
     rig.group.position.y = idleBob;
     rig.groundShadow.position.set(p.x, 0.01, p.z);
 
-    // Piernas: flexión ligera fija (pose lista) + pequeño paso si se mueve.
+    // Piernas: flexión de rodilla base bien marcada (pose atlética, no un
+    // "poste") + un poco más al preparar/golpear + paso al moverse.
+    const kneeBend = 0.22 + rig.prepBlend * 0.08 + swingK * 0.06;
     const moveSwing = Math.sin(p.runPhase) * 0.22 * p.moveAmount;
-    rig.leftLeg.rotation.x = 0.08 + moveSwing;
-    rig.rightLeg.rotation.x = 0.08 - moveSwing;
+    rig.leftLeg.rotation.x = kneeBend + moveSwing;
+    rig.rightLeg.rotation.x = kneeBend - moveSwing;
 
     // Brazo de la pala — corrección clave del spike 2: el eje que barre
     // ROTATION.X mueve el brazo en profundidad (hacia/desde cámara), que
     // desde una cámara casi de espaldas se ve en escorzo y apenas se lee
     // (esto era el bug de la v1: la pala "desaparecía" en pleno golpe).
     // ROTATION.Z, en cambio, barre el brazo de lado a lado en pantalla:
-    // ese es el eje que de verdad se lee. Derecha/revés ahora usan
-    // rotation.z como arco principal (amplio, visible) y rotation.x solo
-    // para una inclinación hacia delante sutil. Los golpes altos siguen
-    // usando rotation.x porque ahí SÍ es el eje correcto (el brazo sube).
+    // ese es el eje que de verdad se lee.
+    //
+    // Tres fases visuales (spike 3):
+    //  a) preparación: sin swing activo pero con anticipación (prepBlend),
+    //     la pala se lleva atrás/lateral hacia el lado de la bola.
+    //  b) impacto: el juego real ya golpeó en swingT≈0 (la velocidad de
+    //     la bola se fija al iniciar el swing, ver match.ts), así que t=0
+    //     debe leerse como "la pala está junto al cuerpo, cerca de donde
+    //     estaba la bola" — no como "atrás", que confundiría impacto con
+    //     preparación.
+    //  c) follow-through: t->1 cruza el brazo hacia delante/al otro lado.
     let lateralAngle = 0; // barrido principal (rotation.z): visible de lado a lado
     let depthAngle = 0.4; // inclinación secundaria (rotation.x): sutil, hacia delante
     if (swinging && p.swingType !== null && isOverheadShot(p.swingType)) {
       depthAngle = -1.7 + t * 3.1; // golpes altos: el brazo sube por encima (eje correcto: x)
       lateralAngle = 0.15 * swingK * swingDir;
     } else if (swinging) {
-      // Derecha: preparación atrás del lado dominante -> extendida, cruzando
-      // ligeramente delante del cuerpo al terminar (arco amplio y lateral).
-      // Revés: mismo arco, con el signo invertido (empieza cruzado).
-      lateralAngle = isBackhand ? -1.3 + t * 2.0 : 1.3 - t * 2.0;
+      // Impacto (t=0, junto al cuerpo) -> follow-through (cruza delante).
+      lateralAngle = isBackhand ? -0.75 + t * 1.55 : 0.75 - t * 1.55;
       depthAngle = 0.15 + swingK * 0.35;
     } else {
-      lateralAngle = 0.55; // reposo: pala delante, ligeramente hacia su lado
-      depthAngle = 0.35;
+      // Reposo <-> preparación real, según la anticipación de la bola.
+      const restLateral = 0.42;
+      const prepLateral = 1.15 * prepSideSigned;
+      lateralAngle = restLateral + (prepLateral - restLateral) * rig.prepBlend;
+      depthAngle = 0.35 + rig.prepBlend * 0.1;
     }
     // Espeja qué brazo sostiene la pala: posición del hombro (pala en el
     // lado dominante, libre en el otro) y el arco lateral, en función de
     // handSign. rotation.x (profundidad) no se espeja: subir/bajar el
-    // brazo no depende de qué mano sea la dominante.
-    rig.paddleArm.position.x = 0.3 * handSign;
-    rig.freeArm.position.x = -0.3 * handSign;
+    // brazo no depende de qué mano sea la dominante. Hombros más
+    // separados (0.3 -> 0.34, ver buildAvatar) para que los brazos no
+    // queden pegados al torso.
+    rig.paddleArm.position.x = 0.34 * handSign;
+    rig.freeArm.position.x = -0.34 * handSign;
     rig.paddleArm.rotation.z = lateralAngle * handSign;
     rig.paddleArm.rotation.x = -depthAngle;
-    rig.freeArm.rotation.z = -0.18 * handSign;
-    rig.freeArm.rotation.x = -0.1;
+    // Brazo libre claramente separado del cuerpo, para equilibrio visual
+    // (antes quedaba pegado a la cadera y se confundía con un objeto
+    // redondo — reportado como "bola/indicador verde" pegado a la
+    // espalda). Un poco más abierto todavía durante el golpe, como un
+    // brazo real que contrapesa el giro.
+    const freeArmOpen = swinging ? 0.55 : 0.4;
+    rig.freeArm.rotation.z = -freeArmOpen * handSign;
+    rig.freeArm.rotation.x = -0.05;
 
     // Contacto: la pala "destella" con un aumento de escala más marcado,
     // más un flash de luz y una breve estela que dejan claro EL INSTANTE
     // y LA DIRECCIÓN del golpe — la señal más legible en pantallas pequeñas.
-    const contact = swinging && p.swingT < 0.18;
+    // Ventana más ajustada (0.18 -> 0.12) para que el flash lea como un
+    // instante, no como un tercio del swing.
+    const contact = swinging && p.swingT < 0.12;
     rig.paddleHead.scale.setScalar(contact ? 1.4 : 1);
 
     const paddleWorldPos = rig.paddleHead.getWorldPosition(_tmpVec3);
     if (contact) {
-      const k = 1 - p.swingT / 0.18; // 1 en el instante del golpe -> 0 al terminar
+      const k = 1 - p.swingT / 0.12; // 1 en el instante del golpe -> 0 al terminar
       rig.impactFlash.position.copy(paddleWorldPos);
       rig.impactFlash.scale.setScalar(0.25 + k * 0.55);
       (rig.impactFlash.material as THREE.SpriteMaterial).opacity = k * 0.9;
@@ -667,7 +777,9 @@ export class ThreeRenderer implements GameRenderer {
     // desplazada un poco hacia el cuerpo (sin re-evaluar toda la
     // jerarquía de nodos con un ángulo pasado), suficiente para una estela
     // corta y legible sin coste extra de cómputo por fotograma.
-    if (swinging && t > 0.05 && t < 0.75) {
+    // `group.position` ya es mundial (su padre es la escena, sin
+    // transform intermedio) — no hace falta otro getWorldPosition.
+    if (swinging && t > 0.02 && t < 0.7) {
       for (let i = 0; i < rig.ghosts.length; i++) {
         const ghost = rig.ghosts[i];
         const lag = (i + 1) * 0.16;
@@ -686,9 +798,17 @@ export class ThreeRenderer implements GameRenderer {
 
   private updateCamera(player: PlayerEntity, dt: number): void {
     const portrait = window.innerHeight > window.innerWidth * 1.1;
-    const behind = portrait ? 5.2 : 6.6;
-    const height = portrait ? 2.7 : 3.1;
-    const panFactor = portrait ? 0.6 : 0.3;
+    // Un poco más lejos/alto que en el spike 2: la pose atlética (piernas
+    // y brazos más separados, torso inclinado) ocupa más ancho de
+    // silueta, y con el encuadre anterior el jugador quedaba cortado en
+    // los laterales (p.ej. de pie en la posición de saque).
+    const behind = portrait ? 6.6 : 7.6;
+    const height = portrait ? 3.05 : 3.4;
+    // Paneo más agresivo que en el spike 2: con la pala extendida bien
+    // hacia fuera del cuerpo, en los laterales de la pista (p.ej. de pie
+    // en la posición de saque) se salía del encuadre por el lado de la
+    // pala aunque el resto del cuerpo sí cupiera.
+    const panFactor = portrait ? 0.82 : 0.42;
 
     const targetCamX = player.x * panFactor;
     this.camX += (targetCamX - this.camX) * Math.min(dt * 3.5, 1);
