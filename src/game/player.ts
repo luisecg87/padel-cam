@@ -10,6 +10,11 @@ export class PlayerEntity {
   x = 0;
   z: number;
   speed = 6.5; // m/s
+  // Mano dominante: puramente identidad/render (qué mano sostiene la pala).
+  // No afecta física, IA ni clasificación de golpe (forehand/backhand se
+  // sigue decidiendo por el lado geométrico de la bola). Fallback a diestro
+  // hasta que exista un perfil de usuario que lo fije explícitamente.
+  dominantHand: 'left' | 'right' = 'right';
   // Animación de golpe
   swingType: ShotType | null = null;
   swingT = 0; // 0..1

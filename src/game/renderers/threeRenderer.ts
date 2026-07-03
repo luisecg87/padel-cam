@@ -476,16 +476,17 @@ export class ThreeRenderer implements GameRenderer {
     headGroup.add(head, hair);
     group.add(headGroup);
 
-    // Brazo libre: cuelga hacia afuera, sin cruzar hacia el centro (evita
-    // que se funda visualmente con el brazo de la pala desde atrás).
+    // Brazo libre y brazo de la pala: la posición de reposo asume diestro
+    // (pala en +X) como geometría de construcción, pero updateAvatar
+    // reposiciona ambos hombros (position.x) cada fotograma según
+    // p.dominantHand — así el mismo rig sirve para ambas lateralidades sin
+    // duplicar geometría ni tener que reconstruir el avatar al vuelo.
     const armGeo = new THREE.CapsuleGeometry(0.055, 0.32, 4, 8);
     const freeArm = new THREE.Group();
     freeArm.position.set(-0.3, HIP_Y + 0.6, 0);
     const freeArmMesh = new THREE.Mesh(armGeo, shirtMat);
     freeArmMesh.position.y = -0.17;
     freeArm.add(freeArmMesh);
-    freeArm.rotation.z = -0.18;
-    freeArm.rotation.x = -0.1;
     group.add(freeArm);
 
     // Brazo de la pala: pivote en el hombro, rota según prep/swing
@@ -578,13 +579,25 @@ export class ThreeRenderer implements GameRenderer {
     const t = swinging ? Math.min(p.swingT, 1) : 0;
     const swingK = swinging ? Math.sin(t * Math.PI) : 0;
 
+    // Mano dominante: viene del estado del jugador (perfil), NUNCA fijada
+    // en el renderer. La geometría del rig se construyó con la pala en
+    // +X local, que anatómicamente es la mano IZQUIERDA del personaje
+    // (verificado con la cámara del rival, que no lleva el giro de 180°:
+    // ahí +X local cae en pantalla-derecha, que es la mano izquierda de
+    // alguien que mira de frente a cámara — el bug reportado). handSign
+    // espeja el hombro/brazo al lado anatómico correcto según
+    // dominantHand, sin tocar la clasificación de golpe (forehand/backhand
+    // la sigue decidiendo match.ts por el lado geométrico de la bola; eso
+    // es gameplay y no se toca aquí, solo qué brazo se dibuja).
+    const handSign = p.dominantHand === 'left' ? 1 : -1;
+
     // Giro de hombros: deliberadamente MODESTO. Con la cámara casi en el
     // eje de espaldas del jugador, un giro de cuerpo grande termina
     // apuntando el brazo de la pala hacia/desde la cámara (foreshortening)
     // y lo hace desaparecer — por eso en la v1 del spike la pala "no se
     // veía" durante el golpe. La lectura del golpe la da el brazo (abajo),
     // no una rotación grande de todo el cuerpo.
-    const turn = swinging ? swingK * 0.22 * swingDir : 0;
+    const turn = swinging ? swingK * 0.22 * swingDir * handSign : 0;
     rig.group.rotation.y = baseFacing + turn * (isCpu ? -1 : 1);
 
     // Ligero balanceo de respiración/espera para que no parezca estático.
@@ -621,8 +634,16 @@ export class ThreeRenderer implements GameRenderer {
       lateralAngle = 0.55; // reposo: pala delante, ligeramente hacia su lado
       depthAngle = 0.35;
     }
-    rig.paddleArm.rotation.z = lateralAngle;
+    // Espeja qué brazo sostiene la pala: posición del hombro (pala en el
+    // lado dominante, libre en el otro) y el arco lateral, en función de
+    // handSign. rotation.x (profundidad) no se espeja: subir/bajar el
+    // brazo no depende de qué mano sea la dominante.
+    rig.paddleArm.position.x = 0.3 * handSign;
+    rig.freeArm.position.x = -0.3 * handSign;
+    rig.paddleArm.rotation.z = lateralAngle * handSign;
     rig.paddleArm.rotation.x = -depthAngle;
+    rig.freeArm.rotation.z = -0.18 * handSign;
+    rig.freeArm.rotation.x = -0.1;
 
     // Contacto: la pala "destella" con un aumento de escala más marcado,
     // más un flash de luz y una breve estela que dejan claro EL INSTANTE
