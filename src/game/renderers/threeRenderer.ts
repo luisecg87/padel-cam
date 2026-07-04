@@ -824,7 +824,12 @@ export class ThreeRenderer implements GameRenderer {
     }
 
     this.camera.position.set(this.camX + shakeX, height + shakeY, player.z + behind);
-    const lookTarget = new THREE.Vector3(this.camX * 0.4, 1.3, COURT.netZ - 1.5);
+    // El objetivo de mirada seguía camX solo al 40%: a paneos grandes (p.ej.
+    // jugador pegado a la banda) la cámara se quedaba mirando muy a la
+    // izquierda/derecha de sí misma y el jugador salía del encuadre por
+    // completo (bug real, no solo cosmético). Ahora el target sigue casi
+    // 1:1 la posición de la cámara, así siempre mira más o menos al frente.
+    const lookTarget = new THREE.Vector3(this.camX * 0.92, 1.3, COURT.netZ - 1.5);
     this.camera.lookAt(lookTarget);
   }
 
