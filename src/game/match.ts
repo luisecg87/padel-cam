@@ -594,8 +594,15 @@ export class MatchMode {
     this.opts.controlP2?.update(dt);
 
     if (this.state === 'replay') {
-      this.opts.control.consumeSwings(); // descartar golpes durante la repetición
-      this.opts.controlP2?.consumeSwings();
+      // Cualquier golpe o movimiento del jugador salta la repetición al
+      // instante en vez de descartarlo en silencio: quien está probando el
+      // juego rápido (o jugando de verdad) no debería quedarse esperando
+      // una repetición que no pidió.
+      const skipSwing = this.opts.control.consumeSwings().length > 0
+        || (this.opts.controlP2?.consumeSwings().length ?? 0) > 0;
+      const move = this.opts.control.getMove();
+      const skipMove = move.mode === 'velocity' && (move.x !== 0 || move.z !== 0);
+      if (skipSwing || skipMove) this.replayT = Infinity;
       this.updateReplay(dt);
       return;
     }
