@@ -1059,8 +1059,10 @@ export class Renderer implements GameRenderer {
     };
     const fBlend = swinging ? 1 : prepBlend;
     // En reposo, la mano libre se acerca a la garganta de la pala (agarre a
-    // dos manos de espera), casi centrada, no abierta hacia el lado.
-    const readyFHand = { x: offSide * shW * 0.14, y: -torsoH * 0.34 };
+    // dos manos de espera), casi centrada, no abierta hacia el lado, y a
+    // la altura del pecho (no de la cintura) para que se lea claramente
+    // delante del cuerpo en vez de quedar tapada junto al pantalón.
+    const readyFHand = { x: offSide * shW * 0.2, y: -torsoH * 0.58 };
     let activeFHand: { x: number; y: number };
     if (isBackhandSwing) {
       // Agarre a dos manos: la mano libre viaja junto al mango de la pala
@@ -1154,8 +1156,8 @@ export class Renderer implements GameRenderer {
       const PREP_ANGLE = 1.1;
       armAngle = lerp(READY_ANGLE, PREP_ANGLE, prepBlend) * (prepBlend > 0 ? prepSide : 1);
       const readyHand = {
-        x: armSide * shW * 0.3, // casi centrada delante del cuerpo, no pegada a un lado
-        y: -torsoH * 0.34, // altura de cintura/pecho bajo: posición de espera real
+        x: armSide * shW * 0.34, // casi centrada delante del cuerpo, no pegada a un lado
+        y: -torsoH * 0.52, // altura de pecho: se lee delante del cuerpo, no tapada junto al pantalón
       };
       // Derecha: el ángulo ya lleva la pala hacia atrás del lado dominante.
       // Revés: el propio ángulo (signo prepSide) cruza la pala delante del
