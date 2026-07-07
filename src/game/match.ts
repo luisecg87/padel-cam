@@ -517,27 +517,32 @@ export class MatchMode {
 
   /** Objetivo del golpe según su tipo (z bajo = profundo en campo CPU). */
   private aimFor(type: ShotType, dir: number): { x: number; z: number } {
+    // Margen lateral ampliado: con teclado/gesto `dir` solo tiene 3 valores
+    // posibles (-1/0/1), así que repetir la misma dirección golpe tras
+    // golpe agrupaba la bola casi en el mismo punto. Un jitter más amplio
+    // reparte el punto de caída dentro del lado apuntado sin perder la
+    // intención de a qué lado se dirige el golpe.
     switch (type) {
       case 'vibora':
         // Cruzada y tensa hacia el cristal lateral
         return {
-          x: clamp(dir * 3.9 + (Math.random() - 0.5) * 0.8, -4.6, 4.6),
+          x: clamp(dir * 3.9 + (Math.random() - 0.5) * 2.4, -4.6, 4.6),
           z: 3.5 + Math.random() * 2.5,
         };
       case 'bandeja':
         // Profunda y controlada, a los pies del fondo rival
         return {
-          x: clamp(dir * 2.2 + (Math.random() - 0.5), -4, 4),
+          x: clamp(dir * 2.2 + (Math.random() - 0.5) * 3, -4, 4),
           z: 1.8 + Math.random() * 2.2,
         };
       case 'smash':
         return {
-          x: clamp(dir * 2.8 + (Math.random() - 0.5), -4.5, 4.5),
+          x: clamp(dir * 2.8 + (Math.random() - 0.5) * 3, -4.5, 4.5),
           z: 4 + Math.random() * 4,
         };
       default:
         return {
-          x: clamp(dir * 2.8 + (Math.random() - 0.5), -4.5, 4.5),
+          x: clamp(dir * 2.8 + (Math.random() - 0.5) * 3.2, -4.5, 4.5),
           z: 3 + Math.random() * 4.5,
         };
     }
