@@ -557,6 +557,16 @@ export class MatchMode {
     speedMul = 1,
   ): void {
     const entity = side === 'player' ? this.player : this.cpu;
+    // El remate es un gesto por encima de la cabeza con la bola casi
+    // encima, no "alta en algún punto dentro del alcance general de
+    // golpeo" (REACH_X/REACH_Z, pensado para derecha/revés/volea). Si la
+    // bola está alta pero fuera de ese alcance más corto, se queda en
+    // bandeja: un remate real no llega a bolas a 1.5-2m de distancia.
+    if (type === 'smash') {
+      const dx = Math.abs(this.ball.pos.x - entity.x);
+      const dz = Math.abs(this.ball.pos.z - entity.z);
+      if (dx > REACH_X * 0.6 || dz > REACH_Z * 0.65) type = 'bandeja';
+    }
     this.ball.vel = computeShotVelocity(this.ball.pos, aim, type, quality);
     // Potencia real del gesto: bola más rápida (o floja) manteniendo el arco.
     // <1 puede quedarse en la red; >1 puede irse larga: riesgo real.
