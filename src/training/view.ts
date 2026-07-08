@@ -235,19 +235,69 @@ export class CameraTrainingView {
       ctx.beginPath();
       ctx.arc(c.x, c.y, r, 0, Math.PI * 2);
       ctx.fill();
-      // Anillo de timing: converge sobre la zona; al tocarla, golpea
+      // Anillo de timing sutil de refuerzo (la señal principal es la bola)
       const ringR = r + s.ringT * r * 2.6;
-      ctx.strokeStyle = 'rgba(255,255,255,0.9)';
-      ctx.lineWidth = 2.5;
+      ctx.strokeStyle = 'rgba(255,255,255,0.35)';
+      ctx.lineWidth = 1.5;
       ctx.beginPath();
       ctx.arc(c.x, c.y, ringR, 0, Math.PI * 2);
       ctx.stroke();
+      this.drawIncomingBall(c, r, 1 - s.ringT);
     }
     // Punto central
     ctx.fillStyle = active ? COLOR.good : 'rgba(255,255,255,0.7)';
     ctx.beginPath();
     ctx.arc(c.x, c.y, 3, 0, Math.PI * 2);
     ctx.fill();
+  }
+
+  /**
+   * Bola virtual que se ve venir: nace pequeña al fondo de la escena y
+   * llega a la zona de impacto EXACTAMENTE en el beat (p=1). Golpear
+   * cuando la bola llega es mucho más natural que leer un anillo
+   * abstracto — es el mismo gesto mental que en la pista real.
+   */
+  private drawIncomingBall(c: { x: number; y: number }, r: number, p: number): void {
+    const ctx = this.ctx;
+    const vr = this.videoRect;
+    // Origen: centro-arriba de la escena ("desde la red"), llegada: la zona
+    const start = { x: vr.x + vr.w * 0.5, y: vr.y + vr.h * 0.12 };
+    const k = Math.min(p, 1);
+    const x = start.x + (c.x - start.x) * k;
+    // Arco: sube un poco y cae hacia la zona, como una bola real
+    const y = start.y + (c.y - start.y) * k - Math.sin(k * Math.PI) * r * 1.3;
+    const ballR = Math.max(r * (0.16 + 0.42 * k), 7); // crece al acercarse
+
+    // Estela corta (dos fantasmas hacia atrás en la trayectoria)
+    for (const [lag, alpha] of [[0.12, 0.28], [0.24, 0.14]] as const) {
+      const kg = Math.max(k - lag, 0);
+      const gx = start.x + (c.x - start.x) * kg;
+      const gy = start.y + (c.y - start.y) * kg - Math.sin(kg * Math.PI) * r * 1.3;
+      ctx.fillStyle = `rgba(230, 236, 42, ${alpha})`;
+      ctx.beginPath();
+      ctx.arc(gx, gy, ballR * (0.75 - lag), 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    // Halo + bola (mismo lenguaje visual que la bola del juego)
+    const glow = ctx.createRadialGradient(x, y, ballR * 0.4, x, y, ballR * 2.4);
+    glow.addColorStop(0, 'rgba(232, 238, 60, 0.4)');
+    glow.addColorStop(1, 'rgba(232, 238, 60, 0)');
+    ctx.fillStyle = glow;
+    ctx.beginPath();
+    ctx.arc(x, y, ballR * 2.4, 0, Math.PI * 2);
+    ctx.fill();
+    const g = ctx.createRadialGradient(x - ballR * 0.3, y - ballR * 0.3, ballR * 0.2, x, y, ballR);
+    g.addColorStop(0, '#fdfda6');
+    g.addColorStop(0.65, '#e6ec2a');
+    g.addColorStop(1, '#c2c916');
+    ctx.fillStyle = g;
+    ctx.strokeStyle = 'rgba(13, 24, 38, 0.85)';
+    ctx.lineWidth = Math.max(ballR * 0.14, 1.5);
+    ctx.beginPath();
+    ctx.arc(x, y, ballR, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
   }
 
   // ---------- HUD DOM ----------

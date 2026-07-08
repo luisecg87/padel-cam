@@ -908,6 +908,15 @@ export class Renderer implements GameRenderer {
     ctx.beginPath();
     ctx.ellipse(cx, base.y, 0.55 * s, 0.17 * s, 0, 0, Math.PI * 2);
     ctx.fill();
+    // Anillo de identidad bajo el jugador (lenguaje de retransmisión de
+    // pádel profesional): elipse del color de su equipo, sutil.
+    ctx.strokeStyle = pal.shirt;
+    ctx.globalAlpha = 0.55;
+    ctx.lineWidth = Math.max(0.035 * s, 2);
+    ctx.beginPath();
+    ctx.ellipse(cx, base.y, 0.42 * s, 0.13 * s, 0, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.globalAlpha = 1;
 
     // Proporciones arcade: cabeza grande, torso ancho, piernas con masa
     const legLen = 0.72 * s;
