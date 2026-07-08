@@ -509,10 +509,16 @@ async function startChallenge(id: ChallengeId): Promise<void> {
 
 // ---- Entrenamiento técnico con cámara ----
 
-function drillToShot(d: DrillType): ShotType {
-  if (d === 'mixto') return 'forehand';
-  if (d === 'volley') return 'volleyFh';
-  return d;
+/** Golpes que entrena cada drill (varios = rotan por repetición) y su nombre. */
+function drillToShots(d: DrillType): { shots: ShotType[]; label: string } {
+  if (d === 'mixto') {
+    return {
+      shots: ['forehand', 'backhand', 'volleyFh', 'volleyBh', 'bandeja', 'smash'],
+      label: 'golpes variados',
+    };
+  }
+  if (d === 'volley') return { shots: ['volleyFh', 'volleyBh'], label: 'voleas' };
+  return { shots: [d], label: SHOT_NAMES[d] };
 }
 
 async function startTraining(): Promise<void> {
@@ -534,12 +540,13 @@ async function startTraining(): Promise<void> {
     }
   }
   ui.show('none');
-  const shot = drillToShot(ui.settings.drill);
+  const { shots, label } = drillToShots(ui.settings.drill);
 
   const view = new CameraTrainingView({
     canvas: trainCanvas,
     tracker,
-    shot,
+    shots,
+    label,
     onFinish: (summary: TrainingSummary) => {
       currentTraining = null;
       const timingTxt =
@@ -547,7 +554,7 @@ async function startTraining(): Promise<void> {
       saveSession({
         date: Date.now(),
         mode: 'practice',
-        title: `Técnica · ${SHOT_NAMES[shot]}`,
+        title: `Técnica · ${label}`,
         stats: [
           { lbl: 'Consistencia', val: `${summary.consistency}%` },
           { lbl: 'Correctos', val: `${summary.correct} / ${summary.reps.length}` },

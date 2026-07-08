@@ -24,7 +24,10 @@ const COLOR = {
 export interface TrainingOptions {
   canvas: HTMLCanvasElement;
   tracker: PoseTracker;
-  shot: ShotType;
+  /** Golpes de la sesión (uno fijo, o varios que rotan por repetición). */
+  shots: ShotType[];
+  /** Nombre de la sesión ("voleas", "golpes variados", …). */
+  label: string;
   onFinish(summary: TrainingSummary): void;
   onQuit(): void;
 }
@@ -39,11 +42,15 @@ export class CameraTrainingView {
   private running = false;
   private feedbackShownAt = 0;
   private powerShown = 0;
+  // Origen horizontal de la bola entrante (fracción del ancho del vídeo):
+  // se sortea en cada repetición para variar la dirección de entrada.
+  private ballOriginK = 0.5;
+  private ballOriginRep = -1;
 
   constructor(opts: TrainingOptions) {
     this.opts = opts;
     this.ctx = opts.canvas.getContext('2d')!;
-    this.session = new TrainingSession(opts.shot);
+    this.session = new TrainingSession(opts.shots, opts.label);
     this.session.onBeat = () => sfx.click();
     this.session.onResult = (rep) => {
       this.feedbackShownAt = performance.now();
@@ -63,7 +70,6 @@ export class CameraTrainingView {
     window.addEventListener('resize', this.resize);
     $('#trainHud').classList.add('active');
     this.opts.canvas.style.display = 'block';
-    $('#trainShot').textContent = SHOT_NAMES[this.opts.shot].toUpperCase();
     $('#btnTrainQuit').onclick = () => {
       this.stop();
       this.opts.onQuit();
@@ -158,8 +164,18 @@ export class CameraTrainingView {
       if (!p || (p.visibility ?? 0) < 0.4) return null;
       return this.px({ x: 1 - p.x, y: p.y });
     };
+    // El esqueleto ES el feedback de postura: verde cuando es óptima,
+    // ámbar cuando es mejorable, rojo cuando hay un fallo claro.
+    const body = this.session.body;
+    const postureLevel = body ? worstPostureCue(body).level : null;
+    const SKELETON_TINT: Record<'good' | 'warn' | 'bad', string> = {
+      good: 'rgba(52, 211, 153, 0.9)',
+      warn: 'rgba(251, 191, 36, 0.85)',
+      bad: 'rgba(248, 113, 113, 0.9)',
+    };
+    const lineColor = postureLevel ? SKELETON_TINT[postureLevel] : COLOR.line;
     ctx.lineCap = 'round';
-    ctx.strokeStyle = COLOR.line;
+    ctx.strokeStyle = lineColor;
     ctx.lineWidth = 3;
     for (const [a, b] of SKELETON) {
       const pa = pt(a);
@@ -170,7 +186,7 @@ export class CameraTrainingView {
       ctx.lineTo(pb.x, pb.y);
       ctx.stroke();
     }
-    ctx.fillStyle = COLOR.joint;
+    ctx.fillStyle = lineColor;
     for (const i of [LM.L_SHOULDER, LM.R_SHOULDER, LM.L_ELBOW, LM.R_ELBOW, LM.L_HIP, LM.R_HIP, LM.L_KNEE, LM.R_KNEE]) {
       const p = pt(i);
       if (!p) continue;
@@ -202,7 +218,7 @@ export class CameraTrainingView {
     const ctx = this.ctx;
     if (!body || s.phase === 'searching' || s.phase === 'done') return;
 
-    const zone = impactZone(this.opts.shot, body);
+    const zone = impactZone(s.shot, body);
     const c = this.px(zone.c);
     const r = Math.max(zone.r * this.videoRect.w, 26);
 
@@ -242,6 +258,11 @@ export class CameraTrainingView {
       ctx.beginPath();
       ctx.arc(c.x, c.y, ringR, 0, Math.PI * 2);
       ctx.stroke();
+      // Cada repetición la bola entra desde un punto distinto del frente
+      if (this.ballOriginRep !== s.repIndex) {
+        this.ballOriginRep = s.repIndex;
+        this.ballOriginK = 0.18 + Math.random() * 0.64;
+      }
       this.drawIncomingBall(c, r, 1 - s.ringT);
     }
     // Punto central
@@ -261,7 +282,7 @@ export class CameraTrainingView {
     const ctx = this.ctx;
     const vr = this.videoRect;
     // Origen: centro-arriba de la escena ("desde la red"), llegada: la zona
-    const start = { x: vr.x + vr.w * 0.5, y: vr.y + vr.h * 0.12 };
+    const start = { x: vr.x + vr.w * this.ballOriginK, y: vr.y + vr.h * 0.12 };
     const k = Math.min(p, 1);
     const x = start.x + (c.x - start.x) * k;
     // Arco: sube un poco y cae hacia la zona, como una bola real
@@ -305,6 +326,7 @@ export class CameraTrainingView {
   private updateHud(now: number): void {
     const s = this.session;
 
+    $('#trainShot').textContent = SHOT_NAMES[s.shot].toUpperCase();
     $('#trainRep').textContent = `${Math.min(s.repIndex + 1, REPS_PER_SESSION)} / ${REPS_PER_SESSION}`;
     $('#trainScore').textContent = s.reps.length ? `${s.consistency}%` : '—';
     $('#trainStreak').textContent = `${s.streak}`;
@@ -317,7 +339,7 @@ export class CameraTrainingView {
       phaseTxt = 'Colócate frente a la cámara, de la cintura hacia arriba';
       phaseCls = 'warn';
     } else if (s.phase === 'announce') {
-      phaseTxt = `Siguiente: ${SHOT_NAMES[this.opts.shot]}`;
+      phaseTxt = `Siguiente: ${SHOT_NAMES[s.shot]}`;
     } else if (s.phase === 'prep') {
       phaseTxt = s.body?.prepared ? 'Preparado · espera el anillo' : 'PREPARA LA PALA';
       phaseCls = s.body?.prepared ? 'good' : '';

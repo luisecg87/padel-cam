@@ -41,6 +41,8 @@ export interface Feedback {
 
 export interface TrainingSummary {
   shot: ShotType;
+  /** Nombre de la sesión ("voleas", "golpes variados" o el golpe único). */
+  label: string;
   reps: RepResult[];
   correct: number;
   consistency: number; // media de score 0..100
@@ -65,7 +67,12 @@ export interface DetectedSwing {
 }
 
 export class TrainingSession {
+  /** Golpe de la repetición ACTUAL (en sesiones variadas cambia por rep). */
   shot: ShotType;
+  /** Nombre de la sesión para informes. */
+  readonly label: string;
+  private pool: ShotType[];
+  private bag: ShotType[] = [];
   phase: Phase = 'searching';
   repIndex = 0; // 0-based; repIndex+1 se muestra
   reps: RepResult[] = [];
@@ -93,8 +100,17 @@ export class TrainingSession {
   private postureBadSeen = false;
   lastPower = 0;
 
-  constructor(shot: ShotType) {
-    this.shot = shot;
+  constructor(shots: ShotType | ShotType[], label?: string) {
+    this.pool = Array.isArray(shots) ? shots : [shots];
+    this.shot = this.pool[0];
+    this.label = label ?? SHOT_NAMES[this.pool[0]];
+  }
+
+  /** Sesiones variadas: siguiente golpe por bolsa barajada (variedad + equilibrio). */
+  private nextShot(): void {
+    if (this.pool.length <= 1) return;
+    if (this.bag.length === 0) this.bag = [...this.pool].sort(() => Math.random() - 0.5);
+    this.shot = this.bag.pop()!;
   }
 
   private get beatTime(): number {
@@ -186,6 +202,7 @@ export class TrainingSession {
   private setPhase(p: Phase, t: number): void {
     this.phase = p;
     this.phaseStart = t;
+    if (p === 'announce') this.nextShot();
     if (p === 'strike') {
       this.ringT = 1;
       this.beatFired = false;
@@ -335,7 +352,7 @@ export class TrainingSession {
     let main: Exclude<FailCause, null> | null = null;
     for (const [k, v] of counts) if (v >= 2 && (!main || v > (counts.get(main) ?? 0))) main = k;
 
-    const name = SHOT_NAMES[this.shot];
+    const name = this.label;
     const ISSUES: Record<Exclude<FailCause, null>, { text: string; tipId: string; rec: string }> = {
       late: {
         text: 'Llegas tarde al impacto',
@@ -350,7 +367,7 @@ export class TrainingSession {
       zone: {
         text: 'El punto de impacto se desvía de la zona ideal',
         tipId: 'impacto-zona',
-        rec: `Haz pasar la mano por el círculo objetivo: es la distancia natural de impacto de ${SHOT_NAMES[this.shot]}. Hazlo lento y exagerado 5 veces y vuelve a la sesión.`,
+        rec: `Haz pasar la mano por el círculo objetivo: es la distancia natural de impacto de ${this.label}. Hazlo lento y exagerado 5 veces y vuelve a la sesión.`,
       },
       form: {
         text: 'Falta preparación previa al golpe',
@@ -373,7 +390,8 @@ export class TrainingSession {
         : `Buen trabajo. Repite la sesión de ${name} buscando superar el ${consistency}% de consistencia.`;
 
     return {
-      shot: this.shot,
+      shot: this.pool[0],
+      label: this.label,
       reps,
       correct,
       consistency,

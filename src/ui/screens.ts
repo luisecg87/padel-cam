@@ -445,7 +445,7 @@ class UI {
   /** TrainingSessionSummary: resumen visual de la sesión de técnica. */
   showTrainingSummary(s: TrainingSummary, xpGained = 0): void {
     $('#tsShot').textContent =
-      `SESIÓN · ${SHOT_NAMES[s.shot].toUpperCase()}` + (xpGained > 0 ? ` · +${xpGained} XP` : '');
+      `SESIÓN · ${s.label.toUpperCase()}` + (xpGained > 0 ? ` · +${xpGained} XP` : '');
     $('#tsReps').textContent = `${s.reps.length}`;
     $('#tsCorrect').textContent = `${s.correct}`;
     $('#tsStreak').textContent = `${s.bestStreak}`;
