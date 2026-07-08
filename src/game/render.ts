@@ -1067,11 +1067,14 @@ export class Renderer implements GameRenderer {
       y: -torsoH * 0.5 + swingK * 0.06 * s,
     };
     const fBlend = swinging ? 1 : prepBlend;
-    // En reposo, la mano libre se acerca a la garganta de la pala (agarre a
-    // dos manos de espera), casi centrada, no abierta hacia el lado, y a
-    // la altura del pecho (no de la cintura) para que se lea claramente
-    // delante del cuerpo en vez de quedar tapada junto al pantalón.
-    const readyFHand = { x: offSide * shW * 0.2, y: -torsoH * 0.58 };
+    // Mano libre en reposo. Vista de frente (rival): cerca de la garganta
+    // de la pala, delante del pecho. Vista de espaldas (jugador cercano):
+    // una mano "delante del pecho" queda dibujada ENCIMA de la espalda y
+    // se lee como brazos cruzados por detrás — ahí la mano va al costado,
+    // con el codo visible fuera de la silueta del torso.
+    const readyFHand = facingCamera
+      ? { x: offSide * shW * 0.2, y: -torsoH * 0.58 }
+      : { x: offSide * shW * 0.85, y: -torsoH * 0.45 };
     let activeFHand: { x: number; y: number };
     if (isBackhandSwing) {
       // Agarre a dos manos: la mano libre viaja junto al mango de la pala
@@ -1164,10 +1167,13 @@ export class Renderer implements GameRenderer {
       const READY_ANGLE = 0.22;
       const PREP_ANGLE = 1.1;
       armAngle = lerp(READY_ANGLE, PREP_ANGLE, prepBlend) * (prepBlend > 0 ? prepSide : 1);
-      const readyHand = {
-        x: armSide * shW * 0.34, // casi centrada delante del cuerpo, no pegada a un lado
-        y: -torsoH * 0.52, // altura de pecho: se lee delante del cuerpo, no tapada junto al pantalón
-      };
+      // Vista de frente (rival): mano delante del pecho. Vista de espaldas
+      // (jugador cercano): esa misma mano quedaría dibujada sobre la
+      // espalda y se lee como brazo cruzado por detrás — va al costado,
+      // a la altura del pecho, con el brazo visible junto al torso.
+      const readyHand = facingCamera
+        ? { x: armSide * shW * 0.4, y: -torsoH * 0.55 }
+        : { x: armSide * shW * 0.9, y: -torsoH * 0.5 };
       // Derecha: el ángulo ya lleva la pala hacia atrás del lado dominante.
       // Revés: el propio ángulo (signo prepSide) cruza la pala delante del
       // cuerpo hacia el lado contrario — sin tirón extra que la saque fuera
@@ -1222,7 +1228,11 @@ export class Renderer implements GameRenderer {
     ctx.stroke();
 
     // ---- Pala grande, claramente separada de la mano ----
-    const rackAngle = armAngle * armSide;
+    // En espera/preparación la pala se sostiene EN ALTO (cabeza de la pala
+    // por encima de la mano, ligeramente inclinada hacia su lado), como en
+    // la posición de lista real de pádel — nunca colgando hacia abajo.
+    // Durante el golpe sigue el ángulo del swing, como siempre.
+    const rackAngle = swinging ? armAngle * armSide : Math.PI - 0.38 * armSide;
     const handleLen = 0.14 * s;
     const rackCx = hand.x + Math.sin(rackAngle) * (handleLen + 0.17 * s);
     const rackCy = hand.y + Math.cos(rackAngle) * (handleLen + 0.17 * s) * 0.85;
