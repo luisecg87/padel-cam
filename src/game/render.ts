@@ -104,6 +104,8 @@ export class Renderer implements GameRenderer {
   private crowdExcite = 0;
   /** Camiseta del rival: los rivales del torneo tienen su propio color. */
   cpuPalette: Palette = CPU_PALETTE;
+  /** Camiseta/piel del jugador humano: la fija su perfil local. */
+  playerPalette: Palette = PLAYER_PALETTE;
   /** Zonas objetivo de los desafíos, dibujadas sobre la pista. */
   targetZones: Array<{ x0: number; x1: number; z0: number; z1: number }> = [];
 
@@ -237,7 +239,7 @@ export class Renderer implements GameRenderer {
     this.drawNet();
     if (showBall && ball.pos.z > COURT.netZ) this.drawBall(ball);
     this.drawParticles(dt);
-    this.drawAvatar(player, PLAYER_PALETTE, false, ball, dt);
+    this.drawAvatar(player, this.playerPalette, false, ball, dt);
     ctx.restore();
 
     if (this.vignette) {
@@ -1050,7 +1052,11 @@ export class Renderer implements GameRenderer {
 
     // Brazo de la pala: hombro/alcance, usados también por el brazo libre
     // para el agarre a dos manos del revés.
-    const armSide = facingCamera ? -1 : 1;
+    // Lado del brazo de la pala: depende de a quién ve la cámara Y de la
+    // mano dominante del jugador (desde atrás, la derecha del jugador cae
+    // en pantalla-derecha; de frente, en pantalla-izquierda).
+    const handSign = p.dominantHand === 'left' ? -1 : 1;
+    const armSide = (facingCamera ? -1 : 1) * handSign;
     const shoulder = { x: armSide * shW * 0.95, y: -torsoH + 0.05 * s };
     const armLen = (0.5 + swingK * 0.1) * s; // brazo extendido en el golpe
 
@@ -1059,7 +1065,7 @@ export class Renderer implements GameRenderer {
     // dos manos); al preparar/golpear se abre para dar equilibrio. En el
     // revés, en cambio, se mantiene junto a la mano de la pala (agarre a
     // dos manos real).
-    const offSide = facingCamera ? 1 : -1;
+    const offSide = -armSide;
     const armSway = -stride * 0.5;
     const fShoulder = { x: offSide * shW * 0.92, y: -torsoH + 0.06 * s };
     const fElbow = {

@@ -301,7 +301,8 @@ export class ChallengeMode {
       return;
     }
 
-    const type: ShotType = classifySwing(b.pos.y, dx, this.bounceCount, swing);
+    // Zurdos: su lado de derecha es -x, se voltea dx para clasificar el golpe
+    const type: ShotType = classifySwing(b.pos.y, dx * (this.player.dominantHand === 'left' ? -1 : 1), this.bounceCount, swing);
     let quality = clamp(1 - (Math.abs(dx) / REACH_X) * 0.45 - (Math.abs(dz) / REACH_Z) * 0.45, 0.15, 1);
     let speedMul = 1;
     if (swing.form) {

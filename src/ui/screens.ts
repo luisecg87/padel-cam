@@ -5,6 +5,8 @@ import type { ChallengeRecord, Correction, DrillSuggestion, ProgressSummary, Sav
 import type { ChallengeDef, ChallengeResult } from '../modes/challenges';
 import type { TrainingSummary } from '../training/session';
 import { SHOT_NAMES } from '../types';
+import { KITS, SKINS, loadProfile, saveProfile } from '../profile';
+import type { PlayerProfile } from '../profile';
 import type { ControlMode, Difficulty, DrillType } from '../types';
 
 export interface MenuSettings {
@@ -35,7 +37,9 @@ const $ = <T extends HTMLElement = HTMLElement>(sel: string): T => {
 
 class UI {
   settings: MenuSettings = { control: 'camera', difficulty: 'medium', drill: 'mixto' };
+  profile: PlayerProfile = loadProfile();
 
+  onProfileChange: ((p: PlayerProfile) => void) | null = null;
   onStartMatch: (() => void) | null = null;
   onStartPractice: (() => void) | null = null;
   onQuit: (() => void) | null = null;
@@ -66,6 +70,7 @@ class UI {
     this.wireOptionRow('#controlRow', 'control', 'control');
     this.wireOptionRow('#difficultyRow', 'diff', 'difficulty');
     this.wireOptionRow('#drillRow', 'drill', 'drill');
+    this.initProfile();
 
     $('#btnMatch').addEventListener('click', () => this.onStartMatch?.());
     $('#btnPractice').addEventListener('click', () => this.onStartPractice?.());
@@ -143,6 +148,75 @@ class UI {
           btn.dataset[dataKey] ?? '';
       });
     });
+  }
+
+  /** Perfil local: nombre, lateralidad y equipación/tono del avatar. */
+  private initProfile(): void {
+    const commit = (): void => {
+      saveProfile(this.profile);
+      this.onProfileChange?.(this.profile);
+    };
+
+    const nameInput = $('#profileName') as HTMLInputElement;
+    nameInput.value = this.profile.name;
+    nameInput.addEventListener('input', () => {
+      this.profile.name = nameInput.value.slice(0, 14).trim();
+      commit();
+    });
+
+    const handBtns = document.querySelectorAll<HTMLButtonElement>('[data-hand]');
+    const syncHands = (): void => {
+      handBtns.forEach((b) => b.classList.toggle('selected', b.dataset.hand === this.profile.dominantHand));
+    };
+    handBtns.forEach((btn) => {
+      btn.addEventListener('click', () => {
+        this.profile.dominantHand = btn.dataset.hand === 'left' ? 'left' : 'right';
+        syncHands();
+        commit();
+      });
+    });
+    syncHands();
+
+    // Muestras de color: equipaciones (cuadradas) + tonos de piel (redondas)
+    const row = $('#kitRow');
+    const syncSwatches = (): void => {
+      row.querySelectorAll<HTMLButtonElement>('.swatch').forEach((b) => {
+        const sel = b.classList.contains('skin')
+          ? Number(b.dataset.skin) === this.profile.skin
+          : Number(b.dataset.kit) === this.profile.kit;
+        b.classList.toggle('selected', sel);
+      });
+    };
+    KITS.forEach((kit, i) => {
+      const b = document.createElement('button');
+      b.className = 'swatch';
+      b.dataset.kit = String(i);
+      b.title = `Camiseta ${kit.name}`;
+      b.style.background = `linear-gradient(160deg, ${kit.shirt}, ${kit.shirtDark})`;
+      b.addEventListener('click', () => {
+        this.profile.kit = i;
+        syncSwatches();
+        commit();
+      });
+      row.appendChild(b);
+    });
+    const gap = document.createElement('span');
+    gap.className = 'swatch-gap';
+    row.appendChild(gap);
+    SKINS.forEach((skin, i) => {
+      const b = document.createElement('button');
+      b.className = 'swatch skin';
+      b.dataset.skin = String(i);
+      b.title = `Tono ${skin.name}`;
+      b.style.background = skin.skin;
+      b.addEventListener('click', () => {
+        this.profile.skin = i;
+        syncSwatches();
+        commit();
+      });
+      row.appendChild(b);
+    });
+    syncSwatches();
   }
 
   show(id: ScreenId): void {

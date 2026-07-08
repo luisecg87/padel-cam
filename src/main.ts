@@ -1,5 +1,6 @@
 import { Renderer } from './game/render';
 import type { GameRenderer } from './game/renderers/GameRenderer';
+import { profilePalette } from './profile';
 import { MatchMode } from './game/match';
 import { PracticeMode } from './modes/practice';
 import { Ball } from './game/ball';
@@ -68,6 +69,14 @@ let tracker: PoseTracker | null = null;
 const idleBall = new Ball();
 const idlePlayer = new PlayerEntity('player');
 const idleCpu = new PlayerEntity('cpu');
+
+// Perfil local: aplica el aspecto/lateralidad al renderer y al avatar del
+// menú, ahora y cada vez que cambie desde la sección de perfil del menú.
+renderer.playerPalette = profilePalette(ui.profile);
+ui.onProfileChange = (p) => {
+  renderer.playerPalette = profilePalette(p);
+  idlePlayer.dominantHand = p.dominantHand;
+};
 let idleRaf = 0;
 function idleLoop(): void {
   renderer.draw(idleBall, idlePlayer, idleCpu, false);
@@ -146,6 +155,7 @@ async function startMatch(): Promise<void> {
     control,
     controlMode: ui.settings.control,
     difficulty: ui.settings.difficulty,
+    p1Name: ui.profile.name || undefined,
     onFinish: (logger, score) => {
       const report = analyzeMatch(logger);
       const title =
@@ -234,6 +244,7 @@ function playTourneyRound(): void {
     control: currentControl,
     controlMode: ui.settings.control,
     difficulty: rival.difficulty,
+    p1Name: ui.profile.name || undefined,
     targetGames: TOURNEY_GAMES,
     rival,
     onFinish: (logger, score) => {
@@ -330,7 +341,7 @@ function startOnlineMatch(session: OnlineSession): void {
     difficulty: 'medium',
     targetGames: 3,
     controlP2: remote,
-    p1Name: 'Anfitrión',
+    p1Name: ui.profile.name || 'Anfitrión',
     rival: { name: 'Invitado', tagline: '', palette: CPU_PALETTE, difficulty: 'medium' },
     onFinish: (logger, score) => {
       cleanup();

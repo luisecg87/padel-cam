@@ -1,6 +1,7 @@
 import { clamp } from '../types';
 import type { Side, ShotType } from '../types';
 import { COURT } from './court';
+import { loadProfile } from '../profile';
 
 export const REACH_X = 1.7; // alcance lateral para golpear (m)
 export const REACH_Z = 2.0; // alcance en profundidad (m)
@@ -30,6 +31,9 @@ export class PlayerEntity {
     this.z = side === 'player' ? 17.5 : 2.5;
     this.prevX = this.x;
     this.prevZ = this.z;
+    // El avatar del jugador humano respeta la lateralidad de su perfil;
+    // la CPU se queda con el fallback diestro.
+    if (side === 'player') this.dominantHand = loadProfile().dominantHand;
   }
 
   get baseZ(): number {

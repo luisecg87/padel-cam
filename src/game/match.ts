@@ -329,7 +329,7 @@ export class MatchMode {
 
     let msg =
       winner === 'player'
-        ? this.isDuel
+        ? this.isDuel || this.opts.p1Name
           ? `¡Punto para ${this.p1Name}!`
           : '¡Punto para ti!'
         : `Punto para ${this.rivalName}`;
@@ -445,7 +445,10 @@ export class MatchMode {
     }
 
     // El jugador de fondo está de cara: su derecha queda en -x
-    const type = classifySwing(b.pos.y, side === 'player' ? dx : -dx, this.bounceCount, swing);
+    // dx se expresa en el marco del jugador (positivo = su lado de derecha):
+    // se voltea para el rival (está de cara) y para zurdos (su derecha es -x).
+    const handSign = e.dominantHand === 'left' ? -1 : 1;
+    const type = classifySwing(b.pos.y, (side === 'player' ? dx : -dx) * handSign, this.bounceCount, swing);
 
     // Calidad base: colocación respecto a la bola (buen timing = golpe preciso)
     let quality = clamp(

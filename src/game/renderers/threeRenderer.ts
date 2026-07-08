@@ -95,6 +95,22 @@ export class ThreeRenderer implements GameRenderer {
   cpuPalette: Palette = CPU_PALETTE;
   targetZones: Array<{ x0: number; x1: number; z0: number; z1: number }> = [];
 
+  private _playerPalette: Palette = PLAYER_PALETTE;
+  /** Aspecto del jugador: recolorea los materiales del rig ya construido. */
+  get playerPalette(): Palette {
+    return this._playerPalette;
+  }
+  set playerPalette(pal: Palette) {
+    this._playerPalette = pal;
+    if (!this.playerRig) return; // aún construyéndose
+    const [skinMat, shirtMat, shortsMat, hairMat] = this.playerRig.bodyMats;
+    skinMat.color.set(pal.skin);
+    shirtMat.color.set(pal.shirt);
+    shirtMat.emissive.set(pal.shirt);
+    shortsMat.color.set(pal.shorts);
+    hairMat.color.set(pal.hair);
+  }
+
   private canvas: HTMLCanvasElement;
   private renderer: THREE.WebGLRenderer;
   private scene: THREE.Scene;

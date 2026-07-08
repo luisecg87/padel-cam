@@ -166,6 +166,35 @@ button {
 }
 #onlineCode:focus { border-color: #2ecc71; }
 
+/* ---- Perfil local: nombre, lateralidad y aspecto del avatar ---- */
+.profile-row { align-items: center; }
+#profileName {
+  font: inherit;
+  color: inherit;
+  width: 150px;
+  padding: 8px 14px;
+  border-radius: 20px;
+  border: 1px solid rgba(255,255,255,.2);
+  background: rgba(255,255,255,.06);
+  outline: none;
+  font-weight: 600;
+}
+#profileName:focus { border-color: #2ecc71; }
+.swatch {
+  width: 34px; height: 30px;
+  border-radius: 10px;
+  border: 2px solid rgba(255,255,255,.25);
+  padding: 0;
+  transition: transform .12s, border-color .12s, box-shadow .12s;
+}
+.swatch.skin { border-radius: 50%; width: 30px; }
+.swatch:hover { transform: translateY(-1px); }
+.swatch.selected {
+  border-color: #2ecc71;
+  box-shadow: 0 0 12px rgba(46, 204, 113, .45);
+}
+.swatch-gap { width: 10px; }
+
 .hint { font-size: .85rem; opacity: .6; max-width: 480px; }
 
 .calib-status {
