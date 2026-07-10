@@ -66,6 +66,9 @@ let currentControl: ControlAdapter | null = null;
 let currentOnline: OnlineSession | null = null;
 let currentGuest: GuestMatchView | null = null;
 let lastModeWasMatch = true;
+// Marca la sesión lanzada desde el onboarding, para dar contexto al informe
+// (evita mostrar métricas en 0 sin explicación al recién llegado).
+let firstSessionPending = false;
 let tracker: PoseTracker | null = null;
 
 // ---- Fondo animado del menú: pista vacía ----
@@ -216,6 +219,8 @@ async function startPractice(): Promise<void> {
       });
       const xpP = addXp(40);
       ui.setCamPreviewVisible(false);
+      ui.setFirstSessionBanner(firstSessionPending);
+      firstSessionPending = false;
       ui.showReport('🎯 Informe de práctica', report, saved, `+40 XP${xpP.leveledUp ? ' · ⬆️ ¡subes de nivel!' : ''}`);
     },
   });
@@ -577,6 +582,8 @@ async function startTraining(): Promise<void> {
       });
       const xpT = addXp(summary.consistency);
       if (xpT.leveledUp) sfx.cheer(true);
+      ui.setFirstSessionBanner(firstSessionPending);
+      firstSessionPending = false;
       ui.showTrainingSummary(summary, summary.consistency);
     },
     onQuit: () => {
@@ -634,11 +641,16 @@ ui.onAgain = () => {
   else void startPractice();
 };
 
-// La elección de control en la bienvenida arranca directo el primer partido
-// (el primer partido termina en informe: es el onboarding de 60 s).
+// "Empezar sesión" en la pantalla de primera sesión lanza una sesión
+// enfocada en el golpe elegido, que termina en informe (el onboarding de
+// 60 s del PRODUCT.md). Con cámara → entrenamiento técnico (el HUD de
+// repeticiones con corrección de postura); con teclado → práctica libre
+// (la máquina lanza-bolas de ese golpe). Ambos dan informe.
 ui.onWelcomeDone = () => {
-  track('bienvenida_completada', { control: ui.settings.control });
-  void startMatch();
+  track('bienvenida_completada', { control: ui.settings.control, drill: ui.settings.drill });
+  firstSessionPending = true;
+  if (ui.settings.control === 'camera') void startTraining();
+  else void startPractice();
 };
 
 startIdle();

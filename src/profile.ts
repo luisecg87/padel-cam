@@ -8,6 +8,7 @@ export interface PlayerProfile {
   dominantHand: 'left' | 'right';
   kit: number; // índice en KITS
   skin: number; // índice en SKINS
+  control: 'camera' | 'keyboard'; // preferencia de control, recordada entre visitas
 }
 
 /** Equipaciones disponibles (color de camiseta + su sombra). */
@@ -33,6 +34,7 @@ const DEFAULT_PROFILE: PlayerProfile = {
   dominantHand: 'right',
   kit: 0,
   skin: 0,
+  control: 'camera',
 };
 
 export function loadProfile(): PlayerProfile {
@@ -45,6 +47,7 @@ export function loadProfile(): PlayerProfile {
       dominantHand: p.dominantHand === 'left' ? 'left' : 'right',
       kit: typeof p.kit === 'number' && KITS[p.kit] ? p.kit : 0,
       skin: typeof p.skin === 'number' && SKINS[p.skin] ? p.skin : 0,
+      control: p.control === 'keyboard' ? 'keyboard' : 'camera',
     };
   } catch {
     return { ...DEFAULT_PROFILE };

@@ -253,15 +253,44 @@ button {
 
 .wel-choices { display: flex; flex-direction: column; gap: 12px; width: 100%; max-width: 420px; margin: 6px 0; }
 .wel-choice {
-  display: flex; flex-direction: column; align-items: flex-start; gap: 3px;
-  padding: 16px 20px; border-radius: 16px; text-align: left;
-  background: rgba(255,255,255,.06); border: 1px solid rgba(255,255,255,.14);
+  display: flex; flex-direction: column; align-items: flex-start; gap: 8px;
+  padding: 16px 18px; border-radius: 16px; text-align: left;
+  background: #10263f; border: 2px solid #1c3752;
   transition: transform .12s, border-color .12s, box-shadow .12s, background .12s;
 }
-.wel-choice:hover { transform: translateY(-2px); border-color: #2ecc71; box-shadow: 0 8px 22px rgba(46,204,113,.22); background: rgba(46,204,113,.1); }
-.wel-choice-ic { font-size: 1.9rem; }
-.wel-choice-t { font-weight: 800; font-size: 1.15rem; }
-.wel-choice-d { opacity: .7; font-size: .88rem; }
+.wel-choice:hover { transform: translateY(-2px); border-color: #22c55e; box-shadow: 0 8px 22px rgba(34,197,94,.22); background: #123a2a; }
+.wel-choice-head { display: flex; align-items: center; justify-content: space-between; width: 100%; }
+.wel-choice-t { font-weight: 800; font-size: 1.05rem; color: #fff; }
+.wel-choice-d { opacity: .82; font-size: .86rem; line-height: 1.45; }
+.wel-badge {
+  font-size: .62rem; font-weight: 800; letter-spacing: .04em;
+  color: #04220f; background: #22c55e; padding: 3px 9px; border-radius: 20px;
+}
+.wel-privacy { font-size: .76rem; color: #8fb4dd; line-height: 1.4; }
+
+/* Paso 3 — Tu primera sesión */
+.wel-summary {
+  width: 100%; max-width: 420px; background: #10263f; border-radius: 16px;
+  padding: 16px 18px; display: flex; flex-direction: column; gap: 12px;
+}
+.wel-row { display: flex; justify-content: space-between; align-items: center; font-size: .9rem; }
+.wel-row > span:first-child { color: #a9bdd2; }
+.wel-row b { color: #fff; }
+.wel-sep { height: 1px; background: #1c3752; }
+.wel-inline-link { font: inherit; color: #8fb4dd; text-decoration: underline; padding: 0; }
+.wel-chips-label {
+  font-size: .74rem; text-transform: uppercase; letter-spacing: .08em;
+  font-weight: 700; opacity: .65; margin: 16px 0 -2px;
+}
+#welStrokeRow { max-width: 420px; }
+
+/* Banner de primera sesión en el informe */
+.first-session-banner {
+  background: rgba(34, 197, 94, .12); border: 1px solid rgba(34, 197, 94, .4);
+  color: #6ee7a0; font-weight: 700; font-size: .95rem; line-height: 1.4;
+  border-radius: 14px; padding: 12px 18px; max-width: 460px;
+}
+.first-session-banner[hidden] { display: none; }
 
 /* ------- HUD ------- */
 #hud { position: absolute; inset: 0; display: none; }

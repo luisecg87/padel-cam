@@ -74,24 +74,55 @@
           <button class="big" id="btnWelNext">Empezar →</button>
           <button class="link" id="btnWelSkip">Saltar e ir al menú</button>
         </div>
-        <!-- Paso 2: cómo jugar → arranca el primer partido -->
+
+        <!-- Paso 2: cómo jugar (requisitos y privacidad visibles ya aquí) -->
         <div class="wel-step" data-step="2" hidden>
-          <div class="wel-logo">🕹️</div>
           <h1 class="wel-title">¿Cómo quieres jugar?</h1>
-          <p class="wel-lead">Elige y te metemos directo a tu primer partido.</p>
+          <p class="wel-lead">Elige y te metemos directo a tu primera sesión.</p>
           <div class="wel-choices">
-            <button class="wel-choice" data-wel-control="camera">
-              <span class="wel-choice-ic">📷</span>
-              <span class="wel-choice-t">Con cámara</span>
-              <span class="wel-choice-d">Juega con el cuerpo · recomendado</span>
+            <button class="wel-choice cam" data-wel-control="camera">
+              <span class="wel-choice-head">
+                <span class="wel-choice-t">📷 Con cámara</span>
+                <span class="wel-badge">RECOMENDADO</span>
+              </span>
+              <span class="wel-choice-d">Juega con el cuerpo · necesitas ~2 m de espacio libre y que se te vea de cintura para arriba</span>
+              <span class="wel-privacy">🔒 La cámara se procesa en tu dispositivo. No se graba ni se envía nada.</span>
             </button>
             <button class="wel-choice" data-wel-control="keyboard">
-              <span class="wel-choice-ic">⌨️</span>
-              <span class="wel-choice-t">Teclado o táctil</span>
-              <span class="wel-choice-d">Sin cámara · flechas y espacio</span>
+              <span class="wel-choice-t">⌨️ Teclado o táctil</span>
+              <span class="wel-choice-d">Sin cámara · flechas y espacio, juega sentado</span>
             </button>
           </div>
           <button class="link" id="btnWelExplore">Prefiero explorar el menú</button>
+        </div>
+
+        <!-- Paso 3: Tu primera sesión (reemplaza el menú completo para nuevos) -->
+        <div class="wel-step" data-step="3" hidden>
+          <h1 class="wel-title">Tu primera sesión</h1>
+          <p class="wel-lead">Te preparamos algo corto para empezar. Puedes ajustarlo luego.</p>
+          <div class="wel-summary">
+            <div class="wel-row">
+              <span>Jugando con</span>
+              <span><b id="welControlLabel">Cámara</b> · <button class="wel-inline-link" id="btnWelChange">cambiar</button></span>
+            </div>
+            <div class="wel-sep"></div>
+            <div class="wel-row">
+              <span>Dificultad</span>
+              <span><b>Fácil</b></span>
+            </div>
+          </div>
+          <div class="wel-chips-label">Golpe a entrenar</div>
+          <div class="btn-row" id="welStrokeRow">
+            <button class="opt" data-wel-stroke="mixto">Mixto</button>
+            <button class="opt" data-wel-stroke="forehand">Derecha</button>
+            <button class="opt" data-wel-stroke="backhand">Revés</button>
+            <button class="opt" data-wel-stroke="volley">Voleas</button>
+            <button class="opt" data-wel-stroke="bandeja">Bandeja</button>
+            <button class="opt" data-wel-stroke="vibora">Víbora</button>
+            <button class="opt" data-wel-stroke="smash">Remate</button>
+          </div>
+          <button class="big" id="btnWelStart">Empezar sesión →</button>
+          <button class="link" id="btnWelFullMenu">Ver todos los modos y ajustes</button>
         </div>
       </div>
     </div>
@@ -203,6 +234,7 @@
 
     <!-- Informe post-partida -->
     <div class="screen" id="report">
+      <div class="first-session-banner" hidden>🎉 Primera sesión registrada — tu próxima racha empieza aquí</div>
       <h2 id="reportTitle">Informe del partido</h2>
       <div id="reportStats"></div>
       <h3>🧑‍🏫 Consejos de tu entrenador</h3>
@@ -239,6 +271,7 @@
 
     <!-- Resumen de sesión de entrenamiento técnico -->
     <div class="screen" id="trainSummary">
+      <div class="first-session-banner" hidden>🎉 Primera sesión registrada — tu próxima racha empieza aquí</div>
       <p class="ts-kicker" id="tsShot">SESIÓN · DERECHA</p>
       <h2 class="ts-title">Resumen de la sesión</h2>
 

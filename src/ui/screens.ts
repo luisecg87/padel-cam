@@ -77,6 +77,14 @@ class UI {
     this.initProfile();
     this.initWelcome();
 
+    // Recuerda el control elegido en visitas anteriores y persiste los cambios
+    // del toggle del menú (los usuarios recurrentes cambian de método ahí).
+    this.selectControl(this.profile.control);
+    $('#controlRow')
+      .querySelectorAll<HTMLButtonElement>('.opt')
+      .forEach((b) => b.addEventListener('click', () =>
+        this.selectControl(b.dataset.control === 'keyboard' ? 'keyboard' : 'camera')));
+
     $('#btnMatch').addEventListener('click', () => this.onStartMatch?.());
     $('#btnPractice').addEventListener('click', () => this.onStartPractice?.());
     $('#btnQuit').addEventListener('click', () => this.onQuit?.());
@@ -155,12 +163,16 @@ class UI {
     });
   }
 
-  /** Fija el control (cámara/teclado) y refleja la selección en el menú. */
+  /** Fija el control (cámara/teclado), lo refleja en el menú y lo recuerda. */
   selectControl(control: ControlMode): void {
     this.settings.control = control;
     $('#controlRow')
       .querySelectorAll<HTMLButtonElement>('.opt')
       .forEach((b) => b.classList.toggle('selected', b.dataset.control === control));
+    if (this.profile.control !== control) {
+      this.profile.control = control;
+      saveProfile(this.profile);
+    }
   }
 
   /** ¿Es la primera visita (aún no ha visto la bienvenida)? */
@@ -186,13 +198,22 @@ class UI {
     this.show('welcome');
   }
 
-  private setWelcomeStep(step: 1 | 2): void {
+  private setWelcomeStep(step: 1 | 2 | 3): void {
     document.querySelectorAll<HTMLElement>('#welcome .wel-step').forEach((el) => {
       el.hidden = Number(el.dataset.step) !== step;
     });
+    if (step === 3) this.syncFirstSession();
   }
 
-  /** Bienvenida: navegación de pasos y salida hacia el primer partido o el menú. */
+  /** Refleja el control elegido y el golpe seleccionado en la pantalla 3. */
+  private syncFirstSession(): void {
+    $('#welControlLabel').textContent = this.settings.control === 'keyboard' ? 'Teclado o táctil' : 'Cámara';
+    $('#welStrokeRow')
+      .querySelectorAll<HTMLButtonElement>('.opt')
+      .forEach((b) => b.classList.toggle('selected', b.dataset.welStroke === this.settings.drill));
+  }
+
+  /** Bienvenida guiada: bienvenida → cómo jugar → primera sesión → jugar. */
   private initWelcome(): void {
     const leaveToMenu = (): void => {
       this.markWelcomeSeen();
@@ -202,15 +223,51 @@ class UI {
     $('#btnWelNext').addEventListener('click', () => this.setWelcomeStep(2));
     $('#btnWelSkip').addEventListener('click', leaveToMenu);
     $('#btnWelExplore').addEventListener('click', leaveToMenu);
+    $('#btnWelFullMenu').addEventListener('click', leaveToMenu);
     $('#btnHowto').addEventListener('click', () => this.showWelcome());
+    $('#btnWelChange').addEventListener('click', () => this.setWelcomeStep(2));
 
+    // Paso 2 → elegir control lleva a la pantalla de primera sesión.
     document.querySelectorAll<HTMLButtonElement>('[data-wel-control]').forEach((btn) => {
       btn.addEventListener('click', () => {
-        this.markWelcomeSeen();
         this.selectControl(btn.dataset.welControl === 'keyboard' ? 'keyboard' : 'camera');
-        this.onWelcomeDone?.();
+        // Preajustes de novato: dificultad fácil y golpe mixto.
+        this.selectDifficulty('easy');
+        if (!this.settings.drill) this.selectDrill('mixto');
+        this.setWelcomeStep(3);
       });
     });
+
+    // Paso 3 → chips de golpe a entrenar.
+    $('#welStrokeRow')
+      .querySelectorAll<HTMLButtonElement>('.opt')
+      .forEach((btn) => {
+        btn.addEventListener('click', () => {
+          this.selectDrill((btn.dataset.welStroke ?? 'mixto') as DrillType);
+          this.syncFirstSession();
+        });
+      });
+
+    // Paso 3 → lanzar la primera sesión (main.ts decide entrenamiento/práctica).
+    $('#btnWelStart').addEventListener('click', () => {
+      this.markWelcomeSeen();
+      this.onWelcomeDone?.();
+    });
+  }
+
+  /** Muestra u oculta el banner de "primera sesión" en las pantallas de informe. */
+  setFirstSessionBanner(show: boolean): void {
+    document.querySelectorAll<HTMLElement>('.first-session-banner').forEach((el) => {
+      el.hidden = !show;
+    });
+  }
+
+  /** Fija la dificultad y la refleja en el menú. */
+  selectDifficulty(diff: Difficulty): void {
+    this.settings.difficulty = diff;
+    $('#difficultyRow')
+      .querySelectorAll<HTMLButtonElement>('.opt')
+      .forEach((b) => b.classList.toggle('selected', b.dataset.diff === diff));
   }
 
   /** Perfil local: nombre, lateralidad y equipación/tono del avatar. */
