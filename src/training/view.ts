@@ -42,9 +42,10 @@ export class CameraTrainingView {
   private running = false;
   private feedbackShownAt = 0;
   private powerShown = 0;
-  // Origen horizontal de la bola entrante (fracción del ancho del vídeo):
-  // se sortea en cada repetición para variar la dirección de entrada.
+  // Origen de la bola entrante (fracciones del vídeo): se sortea en cada
+  // repetición para variar la dirección y la altura de entrada desde el fondo.
   private ballOriginK = 0.5;
+  private ballOriginY = 0.33;
   private ballOriginRep = -1;
 
   constructor(opts: TrainingOptions) {
@@ -218,7 +219,7 @@ export class CameraTrainingView {
     const ctx = this.ctx;
     if (!body || s.phase === 'searching' || s.phase === 'done') return;
 
-    const zone = impactZone(s.shot, body);
+    const zone = impactZone(s.shot, body, s.zoneSpread);
     const c = this.px(zone.c);
     const r = Math.max(zone.r * this.videoRect.w, 26);
 
@@ -258,10 +259,11 @@ export class CameraTrainingView {
       ctx.beginPath();
       ctx.arc(c.x, c.y, ringR, 0, Math.PI * 2);
       ctx.stroke();
-      // Cada repetición la bola entra desde un punto distinto del frente
+      // Cada repetición la bola entra desde un punto distinto del fondo
       if (this.ballOriginRep !== s.repIndex) {
         this.ballOriginRep = s.repIndex;
         this.ballOriginK = 0.18 + Math.random() * 0.64;
+        this.ballOriginY = 0.26 + Math.random() * 0.14;
       }
       this.drawIncomingBall(c, r, 1 - s.ringT);
     }
@@ -273,42 +275,55 @@ export class CameraTrainingView {
   }
 
   /**
-   * Bola virtual que se ve venir: nace pequeña al fondo de la escena y
-   * llega a la zona de impacto EXACTAMENTE en el beat (p=1). Golpear
-   * cuando la bola llega es mucho más natural que leer un anillo
-   * abstracto — es el mismo gesto mental que en la pista real.
+   * Bola virtual que se ve VENIR DESDE EL FONDO: nace pequeña junto al
+   * horizonte de la escena y se acerca con proyección en perspectiva — de
+   * lejos apenas avanza y casi no crece; al final acelera y crece de golpe,
+   * como una bola real que viene hacia ti (no cae desde arriba). Llega a la
+   * zona de impacto EXACTAMENTE en el beat (p=1): golpear cuando la bola
+   * llega es el mismo gesto mental que en la pista real.
    */
   private drawIncomingBall(c: { x: number; y: number }, r: number, p: number): void {
     const ctx = this.ctx;
     const vr = this.videoRect;
-    // Origen: centro-arriba de la escena ("desde la red"), llegada: la zona
-    const start = { x: vr.x + vr.w * this.ballOriginK, y: vr.y + vr.h * 0.12 };
-    const k = Math.min(p, 1);
-    const x = start.x + (c.x - start.x) * k;
-    // Arco: sube un poco y cae hacia la zona, como una bola real
-    const y = start.y + (c.y - start.y) * k - Math.sin(k * Math.PI) * r * 1.3;
-    const ballR = Math.max(r * (0.16 + 0.42 * k), 7); // crece al acercarse
+    // Origen: punto del fondo (junto al horizonte), sorteado por repetición
+    const start = { x: vr.x + vr.w * this.ballOriginK, y: vr.y + vr.h * this.ballOriginY };
+    const DEPTH = 3.2; // profundidad virtual del vuelo (más = nace más lejos)
+    const far = 1 / (1 + DEPTH);
+    // Proyección: escala aparente 1/(1+z) del fondo hacia la cámara. El
+    // avance EN PANTALLA (kp) sale de esa escala, por eso es no lineal.
+    const persp = (k: number): { x: number; y: number; s: number } => {
+      const scale = 1 / (1 + DEPTH * (1 - Math.min(k, 1)));
+      const kp = (scale - far) / (1 - far);
+      return {
+        x: start.x + (c.x - start.x) * kp,
+        // Arco suave: de lejos el vuelo se ve plano; cae al final hacia la zona
+        y: start.y + (c.y - start.y) * kp - Math.sin(kp * Math.PI) * r * 0.55,
+        s: scale,
+      };
+    };
+    const b = persp(p);
+    const ballR = Math.max(r * 0.58 * b.s, 4.5); // diminuta al fondo, grande al llegar
 
     // Estela corta (dos fantasmas hacia atrás en la trayectoria)
-    for (const [lag, alpha] of [[0.12, 0.28], [0.24, 0.14]] as const) {
-      const kg = Math.max(k - lag, 0);
-      const gx = start.x + (c.x - start.x) * kg;
-      const gy = start.y + (c.y - start.y) * kg - Math.sin(kg * Math.PI) * r * 1.3;
-      ctx.fillStyle = `rgba(230, 236, 42, ${alpha})`;
+    for (const [lag, alpha] of [[0.1, 0.28], [0.2, 0.14]] as const) {
+      const g = persp(Math.max(Math.min(p, 1) - lag, 0));
+      ctx.fillStyle = `rgba(230, 236, 42, ${alpha * (0.4 + 0.6 * b.s)})`;
       ctx.beginPath();
-      ctx.arc(gx, gy, ballR * (0.75 - lag), 0, Math.PI * 2);
+      ctx.arc(g.x, g.y, Math.max(r * 0.44 * g.s, 3), 0, Math.PI * 2);
       ctx.fill();
     }
 
-    // Halo + bola (mismo lenguaje visual que la bola del juego)
-    const glow = ctx.createRadialGradient(x, y, ballR * 0.4, x, y, ballR * 2.4);
+    // Halo + bola (mismo lenguaje visual que la bola del juego); más tenue
+    // cuanto más lejos, como profundidad atmosférica.
+    ctx.globalAlpha = 0.55 + 0.45 * b.s;
+    const glow = ctx.createRadialGradient(b.x, b.y, ballR * 0.4, b.x, b.y, ballR * 2.4);
     glow.addColorStop(0, 'rgba(232, 238, 60, 0.4)');
     glow.addColorStop(1, 'rgba(232, 238, 60, 0)');
     ctx.fillStyle = glow;
     ctx.beginPath();
-    ctx.arc(x, y, ballR * 2.4, 0, Math.PI * 2);
+    ctx.arc(b.x, b.y, ballR * 2.4, 0, Math.PI * 2);
     ctx.fill();
-    const g = ctx.createRadialGradient(x - ballR * 0.3, y - ballR * 0.3, ballR * 0.2, x, y, ballR);
+    const g = ctx.createRadialGradient(b.x - ballR * 0.3, b.y - ballR * 0.3, ballR * 0.2, b.x, b.y, ballR);
     g.addColorStop(0, '#fdfda6');
     g.addColorStop(0.65, '#e6ec2a');
     g.addColorStop(1, '#c2c916');
@@ -316,9 +331,10 @@ export class CameraTrainingView {
     ctx.strokeStyle = 'rgba(13, 24, 38, 0.85)';
     ctx.lineWidth = Math.max(ballR * 0.14, 1.5);
     ctx.beginPath();
-    ctx.arc(x, y, ballR, 0, Math.PI * 2);
+    ctx.arc(b.x, b.y, ballR, 0, Math.PI * 2);
     ctx.fill();
     ctx.stroke();
+    ctx.globalAlpha = 1;
   }
 
   // ---------- HUD DOM ----------

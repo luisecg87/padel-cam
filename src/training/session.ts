@@ -83,6 +83,12 @@ export class TrainingSession {
   /** 1 → 0 durante la fase de golpeo (radio del anillo de timing). */
   ringT = 0;
   beatFired = false;
+  /**
+   * Variación de la zona de impacto de esta repetición (anchos de hombros):
+   * `x` la aleja del cuerpo, `y` la sube/baja. La vista y la evaluación usan
+   * el MISMO valor para que lo que se ve sea exactamente lo que se puntúa.
+   */
+  zoneSpread: Pt = { x: 0.14, y: 0 };
 
   onBeat: (() => void) | null = null;
   onResult: ((rep: RepResult) => void) | null = null;
@@ -202,7 +208,12 @@ export class TrainingSession {
   private setPhase(p: Phase, t: number): void {
     this.phase = p;
     this.phaseStart = t;
-    if (p === 'announce') this.nextShot();
+    if (p === 'announce') {
+      this.nextShot();
+      // Nueva repetición → nueva posición de impacto (más lejos del cuerpo
+      // y a distinta altura), para que ningún golpe caiga en el mismo punto.
+      this.zoneSpread = { x: Math.random() * 0.28, y: (Math.random() - 0.5) * 0.3 };
+    }
     if (p === 'strike') {
       this.ringT = 1;
       this.beatFired = false;
@@ -286,7 +297,7 @@ export class TrainingSession {
       const dtMs = Math.round(dt * 1000);
       let zoneDistBw: number | null = null;
       if (body) {
-        const z = impactZone(this.shot, body);
+        const z = impactZone(this.shot, body, this.zoneSpread);
         zoneDistBw = Math.hypot(s.pos.x - z.c.x, s.pos.y - z.c.y) / body.bw;
       }
       const tScore = Math.abs(dt) <= 0.15 ? 40 : Math.abs(dt) <= 0.35 ? 28 : 10;
@@ -305,7 +316,7 @@ export class TrainingSession {
       if (cause === 'early') this.feedback = { text: 'MUY PRONTO', level: 'bad' };
       else if (cause === 'late') this.feedback = { text: 'TARDE', level: 'bad' };
       else if (cause === 'zone') {
-        const tooClose = body && s.pos && Math.abs(s.pos.x - body.hipCenter.x) < Math.abs(impactZone(this.shot, body).c.x - body.hipCenter.x);
+        const tooClose = body && s.pos && Math.abs(s.pos.x - body.hipCenter.x) < Math.abs(impactZone(this.shot, body, this.zoneSpread).c.x - body.hipCenter.x);
         this.feedback = { text: tooClose ? 'EXTIENDE EL BRAZO' : 'IMPACTA MÁS CERCA', level: 'warn' };
       } else if (cause === 'form') this.feedback = { text: 'PREPARA ANTES LA PALA', level: 'warn' };
       else if (score >= 90) this.feedback = { text: 'PERFECTO', level: 'good' };

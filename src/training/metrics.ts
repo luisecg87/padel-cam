@@ -56,30 +56,41 @@ export function shotSide(shot: ShotType): 1 | -1 {
 /**
  * Zona de impacto objetivo relativa al cuerpo (en espejo). El jugador debe
  * hacer pasar la muñeca por esta zona en el momento del golpe.
+ *
+ * `spread` (opcional, en anchos de hombros) es la variación por repetición
+ * que sortea la sesión: `x` aleja la zona del cuerpo hacia el lado del golpe
+ * (nunca la acerca) e `y` la sube o baja un poco. Así el punto de impacto no
+ * queda pegado al cuerpo ni cae siempre en el mismo sitio, como en la pista.
  */
-export function impactZone(shot: ShotType, body: BodyState): { c: Pt; r: number } {
+export function impactZone(
+  shot: ShotType,
+  body: BodyState,
+  spread?: Pt,
+): { c: Pt; r: number } {
   const bw = body.bw;
   const hc = body.hipCenter;
   const chestY = (body.shoulderCenter.y + hc.y) / 2;
   const headY = body.nose.y;
   const side = shotSide(shot);
+  const sx = Math.max(spread?.x ?? 0, 0) * bw; // solo hacia fuera
+  const sy = (spread?.y ?? 0) * bw;
   let c: Pt;
   switch (shot) {
     case 'volleyFh':
     case 'volleyBh':
-      c = { x: hc.x + side * 1.05 * bw, y: chestY };
+      c = { x: hc.x + side * (1.15 * bw + sx), y: chestY + sy };
       break;
     case 'bandeja':
-      c = { x: hc.x + 0.55 * bw, y: headY - 0.35 * bw };
+      c = { x: hc.x + 0.65 * bw + sx, y: headY - 0.35 * bw + sy };
       break;
     case 'vibora':
-      c = { x: hc.x + 0.85 * bw, y: headY - 0.25 * bw };
+      c = { x: hc.x + 0.95 * bw + sx, y: headY - 0.25 * bw + sy };
       break;
     case 'smash':
-      c = { x: hc.x + 0.25 * bw, y: headY - 0.85 * bw };
+      c = { x: hc.x + 0.3 * bw + sx * 0.6, y: headY - 0.85 * bw + sy };
       break;
     default: // derecha / revés
-      c = { x: hc.x + side * 1.25 * bw, y: hc.y - 0.15 * bw };
+      c = { x: hc.x + side * (1.35 * bw + sx), y: hc.y - 0.15 * bw + sy };
   }
   return { c, r: 0.45 * bw };
 }
