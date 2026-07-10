@@ -37,6 +37,9 @@ import { runCalibration } from './camera/calibration';
 import { ui } from './ui/screens';
 import { KeyboardTouchControl, SplitKeyboardControl } from './ui/input';
 import type { ControlAdapter } from './ui/input';
+import { initTelemetry, track } from './telemetry';
+
+initTelemetry();
 
 const canvas = document.querySelector<HTMLCanvasElement>('#game')!;
 const trainCanvas = document.querySelector<HTMLCanvasElement>('#trainCanvas')!;
@@ -150,6 +153,7 @@ async function startMatch(): Promise<void> {
   ui.show('none');
   ui.setCamPreviewVisible(ui.settings.control === 'camera');
 
+  track('partido_iniciado', { control: ui.settings.control, dificultad: ui.settings.difficulty });
   const match = new MatchMode({
     renderer,
     control,
@@ -157,6 +161,7 @@ async function startMatch(): Promise<void> {
     difficulty: ui.settings.difficulty,
     p1Name: ui.profile.name || undefined,
     onFinish: (logger, score) => {
+      track('informe_visto', { modo: 'partido', ganado: score.winner === 'player' });
       const report = analyzeMatch(logger);
       const title =
         score.winner === 'player'
@@ -192,6 +197,7 @@ async function startPractice(): Promise<void> {
   ui.show('none');
   ui.setCamPreviewVisible(ui.settings.control === 'camera');
 
+  track('practica_iniciada', { control: ui.settings.control, drill: ui.settings.drill });
   const practice = new PracticeMode({
     renderer,
     control,
@@ -541,6 +547,7 @@ async function startTraining(): Promise<void> {
   }
   ui.show('none');
   const { shots, label } = drillToShots(ui.settings.drill);
+  track('entrenamiento_iniciado', { drill: ui.settings.drill });
 
   const view = new CameraTrainingView({
     canvas: trainCanvas,
