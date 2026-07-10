@@ -220,6 +220,48 @@ button {
 }
 .legal-footer a { color: inherit; text-decoration: none; }
 .legal-footer a:hover { text-decoration: underline; opacity: 1; }
+.legal-link { font: inherit; opacity: 1; padding: 0; text-decoration: none; }
+.legal-link:hover { text-decoration: underline; }
+
+/* ------- Bienvenida (onboarding de primera visita) ------- */
+.wel-card {
+  width: min(500px, 94vw);
+  background: rgba(9, 20, 34, .78);
+  border: 1px solid rgba(140, 190, 245, .18);
+  backdrop-filter: blur(10px);
+  box-shadow: 0 18px 50px rgba(0, 4, 12, .5);
+  border-radius: 22px;
+  padding: 30px 26px 24px;
+  display: flex; flex-direction: column; align-items: center; gap: 14px;
+}
+.wel-logo { font-size: 3.2rem; line-height: 1; filter: drop-shadow(0 6px 18px rgba(60,140,220,.4)); }
+.wel-title { font-size: clamp(1.5rem, 5.5vw, 2rem); font-weight: 800; letter-spacing: -.5px; margin: 0; }
+.wel-lead { opacity: .9; font-size: 1.02rem; line-height: 1.5; max-width: 420px; margin: 0; }
+.wel-lead b { color: #7dd3fc; }
+.wel-points {
+  list-style: none; padding: 0; margin: 6px 0 4px;
+  display: flex; flex-direction: column; gap: 12px; text-align: left; width: 100%; max-width: 400px;
+}
+.wel-points li {
+  display: flex; align-items: center; gap: 12px;
+  font-size: .97rem; line-height: 1.35;
+  background: rgba(255,255,255,.05); border: 1px solid rgba(255,255,255,.08);
+  border-radius: 14px; padding: 12px 14px;
+}
+.wel-points li span { font-size: 1.5rem; flex-shrink: 0; }
+.wel-card .big { margin-top: 6px; }
+
+.wel-choices { display: flex; flex-direction: column; gap: 12px; width: 100%; max-width: 420px; margin: 6px 0; }
+.wel-choice {
+  display: flex; flex-direction: column; align-items: flex-start; gap: 3px;
+  padding: 16px 20px; border-radius: 16px; text-align: left;
+  background: rgba(255,255,255,.06); border: 1px solid rgba(255,255,255,.14);
+  transition: transform .12s, border-color .12s, box-shadow .12s, background .12s;
+}
+.wel-choice:hover { transform: translateY(-2px); border-color: #2ecc71; box-shadow: 0 8px 22px rgba(46,204,113,.22); background: rgba(46,204,113,.1); }
+.wel-choice-ic { font-size: 1.9rem; }
+.wel-choice-t { font-weight: 800; font-size: 1.15rem; }
+.wel-choice-d { opacity: .7; font-size: .88rem; }
 
 /* ------- HUD ------- */
 #hud { position: absolute; inset: 0; display: none; }

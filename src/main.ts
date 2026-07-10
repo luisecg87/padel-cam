@@ -634,7 +634,21 @@ ui.onAgain = () => {
   else void startPractice();
 };
 
+// La elección de control en la bienvenida arranca directo el primer partido
+// (el primer partido termina en informe: es el onboarding de 60 s).
+ui.onWelcomeDone = () => {
+  track('bienvenida_completada', { control: ui.settings.control });
+  void startMatch();
+};
+
 startIdle();
+
+// Primera visita: en vez de soltar al recién llegado en un menú con 7 modos,
+// se le da una bienvenida breve que lo lleva a su primer partido.
+if (ui.isFirstVisit) {
+  track('bienvenida_vista');
+  ui.showWelcome();
+}
 
 // Gancho de depuración (útil para pruebas automatizadas)
 declare global {

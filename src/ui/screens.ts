@@ -16,6 +16,7 @@ export interface MenuSettings {
 }
 
 type ScreenId =
+  | 'welcome'
   | 'menu'
   | 'calib'
   | 'report'
@@ -26,6 +27,8 @@ type ScreenId =
   | 'challenges'
   | 'challengeEnd'
   | 'none';
+
+const WELCOME_SEEN_KEY = 'padelcam_seen_welcome_v1';
 
 export type TourneyPhase = 'play' | 'lost' | 'champion';
 
@@ -40,6 +43,7 @@ class UI {
   profile: PlayerProfile = loadProfile();
 
   onProfileChange: ((p: PlayerProfile) => void) | null = null;
+  onWelcomeDone: (() => void) | null = null;
   onStartMatch: (() => void) | null = null;
   onStartPractice: (() => void) | null = null;
   onQuit: (() => void) | null = null;
@@ -71,6 +75,7 @@ class UI {
     this.wireOptionRow('#difficultyRow', 'diff', 'difficulty');
     this.wireOptionRow('#drillRow', 'drill', 'drill');
     this.initProfile();
+    this.initWelcome();
 
     $('#btnMatch').addEventListener('click', () => this.onStartMatch?.());
     $('#btnPractice').addEventListener('click', () => this.onStartPractice?.());
@@ -146,6 +151,64 @@ class UI {
         btn.classList.add('selected');
         (this.settings as unknown as Record<string, string>)[settingKey] =
           btn.dataset[dataKey] ?? '';
+      });
+    });
+  }
+
+  /** Fija el control (cámara/teclado) y refleja la selección en el menú. */
+  selectControl(control: ControlMode): void {
+    this.settings.control = control;
+    $('#controlRow')
+      .querySelectorAll<HTMLButtonElement>('.opt')
+      .forEach((b) => b.classList.toggle('selected', b.dataset.control === control));
+  }
+
+  /** ¿Es la primera visita (aún no ha visto la bienvenida)? */
+  get isFirstVisit(): boolean {
+    try {
+      return !localStorage.getItem(WELCOME_SEEN_KEY);
+    } catch {
+      return false;
+    }
+  }
+
+  private markWelcomeSeen(): void {
+    try {
+      localStorage.setItem(WELCOME_SEEN_KEY, '1');
+    } catch {
+      /* localStorage bloqueado: la bienvenida reaparecerá, no pasa nada */
+    }
+  }
+
+  /** Muestra la bienvenida en el paso 1 (primera visita o botón "¿Cómo funciona?"). */
+  showWelcome(): void {
+    this.setWelcomeStep(1);
+    this.show('welcome');
+  }
+
+  private setWelcomeStep(step: 1 | 2): void {
+    document.querySelectorAll<HTMLElement>('#welcome .wel-step').forEach((el) => {
+      el.hidden = Number(el.dataset.step) !== step;
+    });
+  }
+
+  /** Bienvenida: navegación de pasos y salida hacia el primer partido o el menú. */
+  private initWelcome(): void {
+    const leaveToMenu = (): void => {
+      this.markWelcomeSeen();
+      this.show('menu');
+    };
+
+    $('#btnWelNext').addEventListener('click', () => this.setWelcomeStep(2));
+    $('#btnWelSkip').addEventListener('click', leaveToMenu);
+    $('#btnWelExplore').addEventListener('click', leaveToMenu);
+    $('#btnHowto').addEventListener('click', () => this.showWelcome());
+
+    document.querySelectorAll<HTMLButtonElement>('[data-wel-control]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        this.markWelcomeSeen();
+        this.selectControl(btn.dataset.welControl === 'keyboard' ? 'keyboard' : 'camera');
+        this.onWelcomeDone?.();
       });
     });
   }

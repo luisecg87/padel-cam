@@ -58,6 +58,44 @@
   </div>
 
   <div id="ui">
+    <!-- Bienvenida (solo primera visita, o desde "¿Cómo funciona?") -->
+    <div class="screen" id="welcome">
+      <div class="wel-card">
+        <!-- Paso 1: qué es -->
+        <div class="wel-step" data-step="1">
+          <div class="wel-logo">🎾</div>
+          <h1 class="wel-title">Bienvenido a Pádel Cam</h1>
+          <p class="wel-lead">Tu entrenador de pádel en casa. No es un juego de botones: <b>tu gesto real es el que juega.</b></p>
+          <ul class="wel-points">
+            <li><span>🏃</span> Muévete y golpea con tu cuerpo frente a la cámara</li>
+            <li><span>🎯</span> La cámara lee tu técnica y te corrige, golpe a golpe</li>
+            <li><span>📈</span> Cada sesión te dice qué mejorar para la próxima</li>
+          </ul>
+          <button class="big" id="btnWelNext">Empezar →</button>
+          <button class="link" id="btnWelSkip">Saltar e ir al menú</button>
+        </div>
+        <!-- Paso 2: cómo jugar → arranca el primer partido -->
+        <div class="wel-step" data-step="2" hidden>
+          <div class="wel-logo">🕹️</div>
+          <h1 class="wel-title">¿Cómo quieres jugar?</h1>
+          <p class="wel-lead">Elige y te metemos directo a tu primer partido.</p>
+          <div class="wel-choices">
+            <button class="wel-choice" data-wel-control="camera">
+              <span class="wel-choice-ic">📷</span>
+              <span class="wel-choice-t">Con cámara</span>
+              <span class="wel-choice-d">Juega con el cuerpo · recomendado</span>
+            </button>
+            <button class="wel-choice" data-wel-control="keyboard">
+              <span class="wel-choice-ic">⌨️</span>
+              <span class="wel-choice-t">Teclado o táctil</span>
+              <span class="wel-choice-d">Sin cámara · flechas y espacio</span>
+            </button>
+          </div>
+          <button class="link" id="btnWelExplore">Prefiero explorar el menú</button>
+        </div>
+      </div>
+    </div>
+
     <!-- Menú principal -->
     <div class="screen active" id="menu">
       <h1>🎾 Pádel Cam</h1>
@@ -125,6 +163,8 @@
       <p class="hint" id="menuHint"></p>
 
       <nav class="legal-footer">
+        <button class="link legal-link" id="btnHowto">¿Cómo funciona?</button>
+        <span>·</span>
         <a href="./privacidad.html" target="_blank" rel="noopener">Privacidad</a>
         <span>·</span>
         <a href="./terminos.html" target="_blank" rel="noopener">Términos</a>
