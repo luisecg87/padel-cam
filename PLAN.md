@@ -49,6 +49,25 @@ Contexto de producto: ver `PRODUCT.md`. Contexto de usuario: ver `README.md`.*
 
 ## 2. Hoja de ruta priorizada
 
+### P0 — Paquete "beta lanzable" (HECHO, jul 2026)
+Convertido el MVP en algo compartible sin riesgo legal ni a ciegas:
+- **Legal**: `public/privacidad.html` + `public/terminos.html`, enlazadas en
+  el pie del menú; aviso de privacidad de la cámara en la calibración.
+- **Presencia**: `<head>` con SEO/OG/Twitter, favicon, `manifest.webmanifest`,
+  iconos e imagen social `og-image.png`. Assets estáticos en `public/`.
+- **Telemetría**: `src/telemetry.ts` — analítica anónima sin cookies +
+  Sentry, **APAGADAS por defecto**. Eventos de KPI ya instrumentados
+  (partido/práctica/entrenamiento iniciados, informe visto).
+
+**PENDIENTE DEL PROPIETARIO para activar la medición** (no es código):
+1. Crear cuenta en Plausible/Umami → pegar `domain` y `src` en
+   `src/telemetry.ts`.
+2. Crear cuenta en Sentry → pegar el `sentryDsn`.
+3. `npm run deploy`. Hasta entonces la beta funciona pero no mide.
+
+Aún NO hecho de la capa de lanzamiento (siguiente si se quiere PWA plena):
+service worker para offline/instalable-completo; dominio propio.
+
 ### P1 — Validación con cámara real (pendiente de usuario/dispositivo)
 Los flujos de cámara (cuenta atrás de calibración, bola del entrenamiento,
 esqueleto por colores) están verificados solo por compilación y regresión de
