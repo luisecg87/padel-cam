@@ -21,8 +21,8 @@
 
 import type { Session, SupabaseClient } from '@supabase/supabase-js';
 
-const SUPABASE_URL = '';
-const SUPABASE_ANON_KEY = '';
+const SUPABASE_URL = 'https://kbzepoqqggonpsfaovma.supabase.co';
+const SUPABASE_ANON_KEY = 'sb_publishable_qTbiz5RgGjyseBcGRBRXDg_9x3h9ICV';
 
 /** Claves de localStorage que viajan a la nube. */
 const SYNC_KEYS = [
