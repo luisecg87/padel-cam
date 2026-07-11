@@ -49,10 +49,12 @@ self.addEventListener('fetch', (e) => {
   const url = new URL(req.url);
   if (url.origin !== location.origin) return;
 
-  // Navegación: red primero, respaldo del caché si no hay conexión
+  // Navegación: red primero, respaldo del caché si no hay conexión.
+  // 'no-cache' salta el caché HTTP del navegador (GitHub Pages sirve el HTML
+  // con max-age=600): así cada deploy llega en la siguiente visita.
   if (req.mode === 'navigate') {
     e.respondWith(
-      fetch(req)
+      fetch(req, { cache: 'no-cache' })
         .then((res) => {
           const copy = res.clone();
           caches.open(CACHE).then((c) => c.put('./', copy));
