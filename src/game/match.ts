@@ -3,7 +3,7 @@ import { COURT, inServiceBox, sideOfZ } from './court';
 import { PlayerEntity, REACH_X, REACH_Z } from './player';
 import { CpuAi } from './ai';
 import { Score } from './scoring';
-import { classifySwing, computeShotVelocity, SHOT_PARAMS } from './shots';
+import { classifySwing, computeShotVelocity, gestureSpeedMul, SHOT_PARAMS, SPEED_MUL_MAX, SPEED_MUL_MIN } from './shots';
 import { MatchLogger } from '../analysis/logger';
 import { sfx } from '../audio/sfx';
 import { ui } from '../ui/screens';
@@ -364,7 +364,11 @@ export class MatchMode {
   }
 
   private updateScoreHud(): void {
-    ui.updateScore(this.score.gamesLabel(), this.score.pointsLabel());
+    // El marcador lleva los nombres: el del perfil (o "Tú") contra el rival
+    ui.updateScore(this.score.gamesLabel(), this.score.pointsLabel(), {
+      p1: this.opts.p1Name ?? 'Tú',
+      p2: this.opts.rival?.name ?? (this.isDuel ? 'Jugador 2' : 'CPU'),
+    });
   }
 
   /** Confianza y coach reactivo: los errores repetidos traen consejo concreto. */
@@ -465,7 +469,7 @@ export class MatchMode {
       // Mala postura → más probabilidad de error (golpe más impreciso)
       quality = clamp(quality * (0.72 + 0.28 * swing.form.posture), 0.1, 1);
       // Potencia del gesto → velocidad de bola (arriesgar tiene premio y riesgo)
-      speedMul = 0.85 + 0.35 * swing.power;
+      speedMul = gestureSpeedMul(swing.power);
       // Punto de impacto fuera del rango natural → bola floja e imprecisa
       if (swing.form.extension !== null) {
         const [lo, hi] = isOverheadShot(type) ? [0.7, 2.0] : [0.85, 1.8];
@@ -573,7 +577,7 @@ export class MatchMode {
     this.ball.vel = computeShotVelocity(this.ball.pos, aim, type, quality);
     // Potencia real del gesto: bola más rápida (o floja) manteniendo el arco.
     // <1 puede quedarse en la red; >1 puede irse larga: riesgo real.
-    const m = clamp(speedMul, 0.78, 1.18);
+    const m = clamp(speedMul, SPEED_MUL_MIN, SPEED_MUL_MAX);
     this.ball.vel.x *= m;
     this.ball.vel.z *= m;
     // La víbora sale con efecto: curva en el aire y escupe en el bote

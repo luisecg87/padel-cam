@@ -11,20 +11,24 @@ export interface PlayerProfile {
   control: 'camera' | 'keyboard'; // preferencia de control, recordada entre visitas
 }
 
-/** Equipaciones disponibles (color de camiseta + su sombra). */
+/** Equipaciones disponibles (los nuevos SIEMPRE al final: el perfil guarda índices). */
 export const KITS: Array<{ name: string; shirt: string; shirtDark: string }> = [
   { name: 'Menta', shirt: '#2fd6b3', shirtDark: '#118b72' },
   { name: 'Azul', shirt: '#4da3ff', shirtDark: '#1f5fb8' },
   { name: 'Rojo', shirt: '#f0564e', shirtDark: '#a82820' },
   { name: 'Morado', shirt: '#a06bf0', shirtDark: '#6533ad' },
   { name: 'Amarillo', shirt: '#f5c93d', shirtDark: '#b08a12' },
+  { name: 'Naranja', shirt: '#f5813c', shirtDark: '#bb4f11' },
+  { name: 'Rosa', shirt: '#ef6aa5', shirtDark: '#b23a70' },
+  { name: 'Blanco', shirt: '#e8eef4', shirtDark: '#8fa3b8' },
 ];
 
-/** Tonos de piel disponibles. */
+/** Tonos de piel disponibles (los nuevos SIEMPRE al final: el perfil guarda índices). */
 export const SKINS: Array<{ name: string; skin: string; hair: string }> = [
   { name: 'Claro', skin: '#efc296', hair: '#3a2a1c' },
   { name: 'Medio', skin: '#c68e5f', hair: '#241812' },
   { name: 'Oscuro', skin: '#8a5a3b', hair: '#120c08' },
+  { name: 'Muy claro', skin: '#f7d9b8', hair: '#7a5230' },
 ];
 
 const KEY = 'padelcam_profile_v1';

@@ -1,7 +1,7 @@
 import { Ball } from '../game/ball';
 import { COURT, sideOfZ } from '../game/court';
 import { PlayerEntity, REACH_X, REACH_Z } from '../game/player';
-import { classifySwing, computeShotVelocity, SHOT_PARAMS } from '../game/shots';
+import { classifySwing, computeShotVelocity, gestureSpeedMul, SHOT_PARAMS } from '../game/shots';
 import { GRAVITY, BALL_RADIUS } from '../game/ball';
 import { sfx } from '../audio/sfx';
 import { ui } from '../ui/screens';
@@ -285,7 +285,7 @@ export class PracticeMode {
     // La técnica del gesto real también cuenta en la práctica
     if (swing.form) {
       quality = clamp(quality * (0.72 + 0.28 * swing.form.posture), 0.1, 1);
-      speedMul = clamp(0.85 + 0.35 * swing.power, 0.78, 1.18);
+      speedMul = gestureSpeedMul(swing.power);
     }
     const timing = b.pos.z - (p.z - 0.5);
 

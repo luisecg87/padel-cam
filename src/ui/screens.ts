@@ -401,7 +401,13 @@ class UI {
     $('#camPreview').classList.toggle('visible', v);
   }
 
-  updateScore(games: string, pointsLabel: string): void {
+  /** `names` solo llega desde el partido: los demás modos ocultan la fila. */
+  updateScore(games: string, pointsLabel: string, names?: { p1: string; p2: string }): void {
+    $('#scoreNames').hidden = !names;
+    if (names) {
+      $('#scoreNameP1').textContent = names.p1;
+      $('#scoreNameP2').textContent = names.p2;
+    }
     $('#scoreGames').textContent = games;
     const p = $('#scorePoints');
     if (p.textContent && p.textContent !== pointsLabel) {

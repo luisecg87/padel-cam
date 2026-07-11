@@ -65,8 +65,12 @@ Convertido el MVP en algo compartible sin riesgo legal ni a ciegas:
 2. Crear cuenta en Sentry → pegar el `sentryDsn`.
 3. `npm run deploy`. Hasta entonces la beta funciona pero no mide.
 
-Aún NO hecho de la capa de lanzamiento (siguiente si se quiere PWA plena):
-service worker para offline/instalable-completo; dominio propio.
+**PWA (HECHO, jul 2026)**: `public/sw.js` + registro en `main.ts` (solo
+producción). Estrategia: navegación red-primero (los deploys llegan solos),
+`/assets/` caché-primero (hash inmutable), precacheo del build en el install
+leyendo el HTML → los modos sin cámara funcionan offline desde la primera
+visita (verificado con Playwright en modo offline). CDNs externos (MediaPipe,
+PeerJS) nunca se cachean. Falta de esta capa: dominio propio.
 
 ### P1 — Validación con cámara real (pendiente de usuario/dispositivo)
 Los flujos de cámara (cuenta atrás de calibración, bola del entrenamiento,
@@ -90,18 +94,24 @@ sienta mal (sensibilidad de detección, tiempos, legibilidad).
    ofrecerlo como "modo premium".
 3. Si no rinde: descartar migración y seguir puliendo el canvas.
 
-### P4 — Más personalización de avatar
-- Más equipaciones/peinados (los presets viven en `src/profile.ts`: KITS y
-  SKINS; el renderer ya toma todo de `playerPalette`).
-- Nombre del jugador en más sitios (marcador, informe post-partido).
+### P4 — Más personalización de avatar (HECHO en parte, jul 2026)
+- ✅ 8 equipaciones (añadidas Naranja, Rosa, Blanco) y 4 tonos de piel
+  (añadido Muy claro). OJO: los presets nuevos van SIEMPRE al final de KITS/
+  SKINS — el perfil guarda índices y insertarlos en medio cambia el avatar
+  de los usuarios existentes.
+- ✅ Nombre del jugador en el marcador del partido (fila "Luis vs CPU"; los
+  demás modos la ocultan — `updateScore` con `names` opcional) y en el
+  título del informe post-partido al ganar.
+- Pendiente: peinados/accesorios (hoy el pelo va ligado al tono de piel).
 
 ### P5 — Deuda técnica / mejoras menores
 - El chunk `threeRenderer` pesa >500 KB minificado (aviso de Vite) — solo
   afecta a quien usa el flag; si se productiza, dividir three.js.
 - El online usa la nube pública de PeerJS: para producción, servidor de
   señalización propio (`?peer=host:puerto` ya soportado).
-- `speedMul` de potencia de gesto está acotado en `executeHit`
-  (`clamp 0.78-1.18`) Y en practice.ts — unificar en un solo sitio.
+- ✅ `speedMul` unificado (jul 2026): la fórmula y sus cotas viven en
+  `gestureSpeedMul()` (`src/game/shots.ts`); partido, práctica y desafíos
+  la comparten.
 
 ---
 

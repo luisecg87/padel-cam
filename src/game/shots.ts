@@ -44,6 +44,19 @@ export function classifySwing(
   return dx >= 0 ? 'forehand' : 'backhand';
 }
 
+/** Cota del multiplicador de velocidad por potencia del gesto (cámara). */
+export const SPEED_MUL_MIN = 0.78;
+export const SPEED_MUL_MAX = 1.18;
+
+/**
+ * Potencia del gesto real (0..1) → multiplicador de velocidad de bola,
+ * acotado. ÚNICO sitio donde vive esta fórmula: partido, práctica y
+ * desafíos deben usarla para que el mismo gesto pegue igual en todos.
+ */
+export function gestureSpeedMul(power: number): number {
+  return Math.min(Math.max(0.85 + 0.35 * power, SPEED_MUL_MIN), SPEED_MUL_MAX);
+}
+
 /**
  * Calcula la velocidad inicial para que la bola aterrice en `target`,
  * elevando el arco lo necesario para pasar la red.

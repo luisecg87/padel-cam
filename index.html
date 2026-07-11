@@ -220,8 +220,13 @@
     <!-- HUD durante el juego -->
     <div id="hud">
       <div id="scoreboard">
-        <span id="scoreGames"></span>
-        <span id="scorePoints"></span>
+        <div id="scoreNames" hidden>
+          <span id="scoreNameP1"></span><span class="score-vs">vs</span><span id="scoreNameP2"></span>
+        </div>
+        <div class="score-nums">
+          <span id="scoreGames"></span>
+          <span id="scorePoints"></span>
+        </div>
       </div>
       <div id="serveInfo"></div>
       <div id="toast"></div>

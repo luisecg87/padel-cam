@@ -1,7 +1,7 @@
 import { Ball } from '../game/ball';
 import { COURT, sideOfZ } from '../game/court';
 import { PlayerEntity, REACH_X, REACH_Z } from '../game/player';
-import { classifySwing, computeShotVelocity, SHOT_PARAMS } from '../game/shots';
+import { classifySwing, computeShotVelocity, gestureSpeedMul, SHOT_PARAMS } from '../game/shots';
 import { sfx } from '../audio/sfx';
 import { ui } from '../ui/screens';
 import { clamp } from '../types';
@@ -307,7 +307,7 @@ export class ChallengeMode {
     let speedMul = 1;
     if (swing.form) {
       quality = clamp(quality * (0.72 + 0.28 * swing.form.posture), 0.1, 1);
-      speedMul = clamp(0.85 + 0.35 * swing.power, 0.78, 1.18);
+      speedMul = gestureSpeedMul(swing.power);
     }
 
     // En la Diana, apuntar con la dirección del gesto es la clave

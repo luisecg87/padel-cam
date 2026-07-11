@@ -168,7 +168,7 @@ async function startMatch(): Promise<void> {
       const report = analyzeMatch(logger);
       const title =
         score.winner === 'player'
-          ? `🏆 ¡Ganaste ${score.games.player}-${score.games.cpu}!`
+          ? `🏆 ¡Ganaste ${score.games.player}-${score.games.cpu}${ui.profile.name ? `, ${ui.profile.name}` : ''}!`
           : `Perdiste ${score.games.player}-${score.games.cpu}… ¡la próxima cae!`;
       const saved = saveSession({
         date: Date.now(),
@@ -675,3 +675,13 @@ window.__padel = {
   getMode: () => currentMode,
   ui,
 };
+
+// PWA: el service worker hace la app instalable y jugable sin conexión
+// (los modos sin cámara). Solo en producción para no interferir con el dev.
+if (import.meta.env.PROD && 'serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('sw.js').catch(() => {
+      // Sin SW se juega igual: solo se pierde offline/instalación
+    });
+  });
+}

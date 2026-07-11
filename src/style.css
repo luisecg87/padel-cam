@@ -299,7 +299,7 @@ button {
 #scoreboard {
   position: absolute; top: max(10px, env(safe-area-inset-top)); left: 50%;
   transform: translateX(-50%);
-  display: flex; gap: 0; align-items: stretch;
+  display: flex; flex-direction: column; align-items: stretch;
   background: rgba(6, 14, 26, .58);
   backdrop-filter: blur(10px);
   border: 1px solid rgba(255,255,255,.13);
@@ -312,6 +312,19 @@ button {
   box-shadow: 0 10px 32px rgba(0, 4, 12, .55);
   font-variant-numeric: tabular-nums;
 }
+.score-nums { display: flex; gap: 0; align-items: stretch; }
+/* Nombres de los jugadores sobre los números (solo en partido) */
+#scoreNames {
+  display: flex; justify-content: space-between; align-items: baseline; gap: 14px;
+  padding: 4px 14px 3px;
+  font-size: .58em; font-weight: 700; letter-spacing: .4px;
+  color: #9fb4cc;
+  border-bottom: 1px solid rgba(255,255,255,.1);
+}
+#scoreNames[hidden] { display: none; }
+#scoreNames .score-vs { color: #5c7188; font-size: .85em; }
+/* Con la fila de nombres el marcador es más alto: el aviso de saque baja */
+#scoreboard:has(#scoreNames:not([hidden])) + #serveInfo { top: 96px; }
 #scoreGames {
   color: #ffd166;
   padding: 10px 20px;
@@ -440,6 +453,7 @@ button {
   #scoreGames { padding: 11px 18px; }
   #scorePoints { padding: 11px 22px; }
   #serveInfo { top: 74px; font-size: .95rem; padding: 5px 16px; }
+  #scoreboard:has(#scoreNames:not([hidden])) + #serveInfo { top: 108px; }
   #shotChip { top: 120px; font-size: .88rem; }
   #fireChip { top: 66px; }
 }
