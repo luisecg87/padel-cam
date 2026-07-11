@@ -79,12 +79,18 @@ los modos sin cámara — **este entorno de desarrollo no tiene webcam**. Antes
 de construir más encima: probar en dispositivo real y corregir lo que se
 sienta mal (sensibilidad de detección, tiempos, legibilidad).
 
-### P2 — Perfiles Fase 2: cuentas reales
-- Backend recomendado: **Supabase** (o Firebase) en plan gratuito.
-- Login con Google/email; `src/profile.ts` pasa a ser caché local del perfil
-  remoto (ya está diseñado para eso — no cambiar su API).
-- Sincronizar: perfil, XP/nivel, trofeos, sesiones (`src/analysis/progress.ts`
-  hoy es todo localStorage).
+### P2 — Perfiles Fase 2: cuentas reales (CÓDIGO HECHO, jul 2026 — falta activar)
+- Implementado en `src/cloud.ts` + `supabase.sql`, APAGADO por defecto (mismo
+  patrón que telemetry.ts). Diseño local-primero: el juego sigue leyendo/
+  escribiendo localStorage; la nube guarda un espejo jsonb por usuario
+  (perfil + XP + trofeos + sesiones + récords, ver SYNC_KEYS) y lo restaura
+  al iniciar sesión en otro dispositivo. Fusión: gana el lado con más XP.
+- Login por enlace mágico al correo (signInWithOtp), sin contraseñas. La
+  librería carga con import() dinámico: sin configurar no se descarga nada.
+- **PENDIENTE DEL PROPIETARIO para activar**: (1) crear proyecto en Supabase,
+  (2) ejecutar `supabase.sql` en el SQL Editor, (3) poner la URL pública del
+  juego como Site URL en Authentication → URL Configuration, (4) pegar URL y
+  clave anon del proyecto en `src/cloud.ts` y desplegar.
 - Después: rankings/ligas (ver PRODUCT.md §monetización).
 
 ### P3 — Decisión Three.js

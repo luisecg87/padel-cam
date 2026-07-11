@@ -17,6 +17,7 @@
   },
   "dependencies": {
     "@mediapipe/tasks-vision": "^0.10.14",
+    "@supabase/supabase-js": "^2.110.2",
     "peerjs": "^1.5.5",
     "three": "^0.169.0"
   }

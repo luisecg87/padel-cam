@@ -195,6 +195,14 @@ button {
 }
 .swatch-gap { width: 10px; }
 
+/* Nube (Fase 2): estado + acción bajo el perfil (oculta sin configurar) */
+#cloudRow {
+  display: flex; align-items: center; justify-content: center; gap: 10px;
+  flex-wrap: wrap; margin-top: 6px;
+  font-size: .82rem; color: #9fb4cc;
+}
+#cloudRow[hidden] { display: none; }
+
 .hint { font-size: .85rem; opacity: .6; max-width: 480px; }
 
 .calib-status {

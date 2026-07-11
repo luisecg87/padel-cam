@@ -38,8 +38,11 @@ import { ui } from './ui/screens';
 import { KeyboardTouchControl, SplitKeyboardControl } from './ui/input';
 import type { ControlAdapter } from './ui/input';
 import { initTelemetry, track } from './telemetry';
+import { initCloud } from './cloud';
 
 initTelemetry();
+// Nube (Fase 2): no-op hasta configurar Supabase en src/cloud.ts
+void initCloud();
 
 const canvas = document.querySelector<HTMLCanvasElement>('#game')!;
 const trainCanvas = document.querySelector<HTMLCanvasElement>('#trainCanvas')!;
