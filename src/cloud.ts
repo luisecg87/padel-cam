@@ -130,6 +130,18 @@ async function mergeOnLogin(): Promise<void> {
   syncUi();
 }
 
+/** Traduce los errores más comunes del login por correo a algo accionable. */
+function authErrorText(msg: string): string {
+  if (/once every|rate limit|too many/i.test(msg)) {
+    return 'Límite de correos alcanzado: espera unos minutos y reinténtalo.';
+  }
+  if (/signups? not allowed/i.test(msg)) {
+    return 'El proyecto no permite registros: en Supabase activa Email en Authentication → Sign In / Up.';
+  }
+  if (/invalid.*email|email.*invalid/i.test(msg)) return 'Ese correo no parece válido.';
+  return `Error: ${msg}`;
+}
+
 function wireUi(): void {
   const btn = $('#btnCloud');
   if (!btn) return;
@@ -150,7 +162,7 @@ function wireUi(): void {
       });
       setStatus(
         error
-          ? '⚠️ No se pudo enviar el enlace. Espera un minuto y reinténtalo.'
+          ? `⚠️ ${authErrorText(error.message)}`
           : '📬 Revisa tu correo y abre el enlace EN ESTE dispositivo.',
       );
     })();
