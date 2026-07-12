@@ -1,0 +1,137 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<meta name="robots" content="index,follow" />
+<title>Política de privacidad — Pádel Cam</title>
+<meta name="description" content="Cómo Pádel Cam trata (o mejor dicho, no envía) tus datos: la cámara se procesa en tu dispositivo y ninguna imagen sale de él." />
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: #050c18; color: #dce7f5;
+    font: 16px/1.7 "Segoe UI", system-ui, sans-serif;
+    padding: 0 20px;
+  }
+  main { max-width: 720px; margin: 0 auto; padding: 40px 0 80px; }
+  a.back {
+    display: inline-block; margin-bottom: 28px; color: #7dd3fc;
+    text-decoration: none; font-weight: 600;
+  }
+  a.back:hover { text-decoration: underline; }
+  h1 { font-size: 2rem; font-weight: 800; letter-spacing: -.5px; margin: 0 0 6px; color: #eaf2ff; }
+  .updated { color: #7f93ad; font-size: .9rem; margin-bottom: 32px; }
+  h2 { font-size: 1.2rem; margin: 34px 0 10px; color: #9fd3ff; }
+  p, li { color: #c3d2e6; }
+  ul { padding-left: 22px; }
+  li { margin: 6px 0; }
+  strong { color: #eaf2ff; }
+  .highlight {
+    background: rgba(46, 204, 113, .1); border: 1px solid rgba(46, 204, 113, .3);
+    border-radius: 12px; padding: 14px 18px; margin: 22px 0;
+  }
+  a { color: #7dd3fc; }
+  footer { margin-top: 48px; color: #6f849c; font-size: .85rem; border-top: 1px solid rgba(255,255,255,.08); padding-top: 18px; }
+</style>
+</head>
+<body>
+<main>
+  <a class="back" href="./">← Volver al juego</a>
+  <h1>Política de privacidad</h1>
+  <p class="updated">Última actualización: 10 de julio de 2026</p>
+
+  <div class="highlight">
+    <strong>Lo esencial en una frase:</strong> Pádel Cam analiza tu cámara
+    <strong>dentro de tu propio navegador</strong>. Ninguna imagen ni vídeo
+    tuyo se sube, se guarda ni se envía a ningún servidor. Nunca.
+  </div>
+
+  <h2>1. Quién es responsable</h2>
+  <p>
+    Pádel Cam es un proyecto personal operado por su autor. Para cualquier
+    consulta sobre privacidad puedes escribir a
+    <a href="mailto:luiscontreras.e87@gmail.com">luiscontreras.e87@gmail.com</a>.
+  </p>
+
+  <h2>2. La cámara: procesamiento 100 % local</h2>
+  <p>
+    Cuando eliges el modo con cámara, el navegador te pide permiso para
+    usarla. El vídeo se analiza en tiempo real <strong>en tu dispositivo</strong>
+    mediante la tecnología MediaPipe, que detecta la posición de tu cuerpo
+    para convertir tus gestos en golpes.
+  </p>
+  <ul>
+    <li>Las imágenes de la cámara <strong>no se graban</strong>.</li>
+    <li><strong>No se transmiten</strong> a ningún servidor ni a terceros.</li>
+    <li>Al cerrar la pestaña, el acceso a la cámara termina y no queda nada.</li>
+  </ul>
+
+  <h2>3. Datos que se guardan en tu navegador</h2>
+  <p>
+    Para recordar tu perfil y tu progreso, el juego guarda cierta información
+    en el almacenamiento local (<em>localStorage</em>) de tu navegador. Esto
+    <strong>vive solo en tu dispositivo</strong> y no se envía a ningún sitio:
+  </p>
+  <ul>
+    <li>Tu nombre, mano dominante y aspecto del avatar.</li>
+    <li>Tu progreso: XP, nivel, trofeos, historial de sesiones y correcciones.</li>
+  </ul>
+  <p>
+    Puedes borrarlo cuando quieras desde <em>Mi progreso → Borrar historial</em>,
+    o limpiando los datos del sitio en tu navegador.
+  </p>
+
+  <h2>4. Terceros que intervienen técnicamente</h2>
+  <p>Por ser una web, hay servicios que reciben tu dirección IP como en cualquier página:</p>
+  <ul>
+    <li>
+      <strong>Alojamiento (GitHub Pages):</strong> sirve los archivos del juego.
+      Como todo servidor web, registra peticiones estándar (IP, navegador).
+    </li>
+    <li>
+      <strong>Modelo de detección (CDN de Google y jsDelivr):</strong> la primera
+      vez que usas la cámara, el navegador descarga de estos CDN el modelo de
+      análisis de pose. Reciben la petición de descarga, no tus imágenes.
+    </li>
+    <li>
+      <strong>Modo online 1 vs 1:</strong> para conectar dos jugadores se usa un
+      servicio de señalización (PeerJS). La partida es directa entre navegadores
+      (P2P); solo se intercambian posiciones de juego, nunca vídeo.
+    </li>
+  </ul>
+
+  <h2>5. Métricas de uso</h2>
+  <p>
+    Si en el futuro se activan métricas de uso, serán <strong>anónimas y sin
+    cookies</strong> (número de visitas y páginas, sin identificarte ni
+    rastrearte entre sitios). Esta política se actualizará si eso ocurre.
+    A día de hoy, la web no usa cookies de seguimiento.
+  </p>
+
+  <h2>6. Menores</h2>
+  <p>
+    El juego es apto para todos los públicos. Al no recopilar datos personales
+    en servidores, no se solicita ninguna información identificativa.
+  </p>
+
+  <h2>7. Tus derechos</h2>
+  <p>
+    Como toda tu información vive en tu propio dispositivo, tú tienes el control
+    total: puedes verla, modificarla o borrarla en cualquier momento desde el
+    propio juego. Para cualquier otra cuestión, escribe a
+    <a href="mailto:luiscontreras.e87@gmail.com">luiscontreras.e87@gmail.com</a>.
+  </p>
+
+  <h2>8. Cambios</h2>
+  <p>
+    Si esta política cambia, se actualizará la fecha del encabezado. Los cambios
+    relevantes se anunciarán dentro del juego.
+  </p>
+
+  <footer>
+    Pádel Cam · <a href="./">Inicio</a> · <a href="./terminos.html">Términos de uso</a>
+  </footer>
+</main>
+</body>
+</html>
