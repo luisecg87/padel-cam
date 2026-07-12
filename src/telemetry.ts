@@ -16,13 +16,15 @@ interface TelemetryConfig {
   sentryDsn: string;
 }
 
-// 👇 RELLENA AQUÍ PARA ACTIVAR (todo vacío = beta sin telemetría externa)
+// 👇 Claves del propietario (jul 2026). El dominio debe coincidir con el
+// sitio registrado en plausible.io; el DSN es del proyecto padel-cam en
+// sentry.io (región UE). Ninguno es secreto: viajan en el bundle público.
 const CONFIG: TelemetryConfig = {
   analytics: {
-    domain: '', // p.ej. 'luisecg87.github.io/padel-cam'
-    src: '', // p.ej. 'https://plausible.io/js/script.tagged-events.js'
+    domain: 'luisecg87.github.io',
+    src: 'https://plausible.io/js/script.js',
   },
-  sentryDsn: '', // p.ej. 'https://xxxx@oXXXX.ingest.sentry.io/XXXX'
+  sentryDsn: 'https://2ceaa07647b9c2285293f4ff9fc7d5eb@o4511720974581760.ingest.de.sentry.io/4511720982184016',
 };
 
 let analyticsReady = false;
