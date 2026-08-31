@@ -5,6 +5,7 @@ import { CpuAi } from './ai';
 import { Score } from './scoring';
 import { Renderer } from './render';
 import { computeShotVelocity } from './shots';
+import { evaluateTechnique } from '../camera/technique';
 import { MatchLogger } from '../analysis/logger';
 import { ui } from '../ui/screens';
 import { clamp, opponent } from '../types';
@@ -129,7 +130,7 @@ export class MatchMode {
     );
   }
 
-  private doServe(dirBias: number): void {
+  private doServe(dirBias: number, power = 1): void {
     const server = this.servingSide;
     const receiver = opponent(server);
     const boxCenterZ = receiver === 'cpu' ? 5.8 : 14.2;
@@ -139,7 +140,7 @@ export class MatchMode {
     };
     const quality = server === 'player' ? 0.85 : 0.8;
     const from = { x: this.servePos.x, y: 1.0, z: this.servePos.z };
-    this.ball.launch(from, computeShotVelocity(from, target, 'serve', quality));
+    this.ball.launch(from, computeShotVelocity(from, target, 'serve', quality, power));
 
     const entity = server === 'player' ? this.player : this.cpu;
     entity.startSwing('serve');
@@ -259,7 +260,7 @@ export class MatchMode {
 
   private tryPlayerSwing(swing: SwingEvent): void {
     if (this.state === 'preServe' && this.servingSide === 'player') {
-      this.doServe(swing.dir);
+      this.doServe(swing.dir, swing.power);
       return;
     }
     if (this.state !== 'rally' || this.lastHitBy === 'player') return;
@@ -305,7 +306,11 @@ export class MatchMode {
       x: clamp(swing.dir * 2.8 + (Math.random() - 0.5), -4.5, 4.5),
       z: type === 'smash' ? 4 + Math.random() * 4 : 3 + Math.random() * 4.5,
     };
-    this.executeHit('player', type, quality, aim, timing);
+    const technique =
+      swing.shoulderTurn !== undefined && swing.stepped !== undefined
+        ? evaluateTechnique(type, swing.shoulderTurn, swing.stepped)
+        : null;
+    this.executeHit('player', type, quality, aim, timing, swing.power, technique);
   }
 
   private executeHit(
@@ -314,9 +319,11 @@ export class MatchMode {
     quality: number,
     aim: { x: number; z: number },
     timing: number,
+    power = 1,
+    technique: { shoulderOk: boolean; stepOk: boolean } | null = null,
   ): void {
     const entity = side === 'player' ? this.player : this.cpu;
-    this.ball.vel = computeShotVelocity(this.ball.pos, aim, type, quality);
+    this.ball.vel = computeShotVelocity(this.ball.pos, aim, type, quality, power);
     this.ball.active = true;
     entity.startSwing(type);
 
@@ -324,6 +331,8 @@ export class MatchMode {
       by: side, type, quality, timing,
       x: entity.x, z: entity.z,
       afterWall: this.wallSinceHit,
+      shoulderOk: technique?.shoulderOk,
+      stepOk: technique?.stepOk,
     });
 
     this.lastHitBy = side;

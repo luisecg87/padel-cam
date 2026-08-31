@@ -9,6 +9,8 @@ export const LM = {
   R_WRIST: 16,
   L_HIP: 23,
   R_HIP: 24,
+  L_ANKLE: 27,
+  R_ANKLE: 28,
 } as const;
 
 const WASM_URL = 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm';
@@ -117,7 +119,10 @@ export function drawPreview(
   ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
   if (!frame) return;
   ctx.fillStyle = '#2ecc71';
-  const dots = [LM.NOSE, LM.L_SHOULDER, LM.R_SHOULDER, LM.L_WRIST, LM.R_WRIST, LM.L_HIP, LM.R_HIP];
+  const dots = [
+    LM.NOSE, LM.L_SHOULDER, LM.R_SHOULDER, LM.L_WRIST, LM.R_WRIST,
+    LM.L_HIP, LM.R_HIP, LM.L_ANKLE, LM.R_ANKLE,
+  ];
   for (const i of dots) {
     const p = frame.lm[i];
     if (!p || (p.visibility ?? 1) < 0.4) continue;

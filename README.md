@@ -40,6 +40,20 @@ src/
   ui/        pantallas, HUD, control por teclado/táctil
 ```
 
+## Tope de accesos gratuitos
+
+El juego puede limitar cuántas personas entran gratis (mientras se define cómo cobrar) con un cupo global real, no evadible solo abriendo incógnito: se guarda en una tabla de Supabase y se reclama con una función atómica (`supabase/schema.sql`).
+
+**Activarlo:**
+1. Crear un proyecto en [supabase.com](https://supabase.com) (o reutilizar uno existente).
+2. Abrir el **SQL Editor** del proyecto y ejecutar el contenido de `supabase/schema.sql` (ajusta el cupo `cap` ahí antes de correrlo, o después con `update access_counter set cap = 200 where id = 1;`).
+3. Copiar `.env.example` a `.env` y completar `VITE_SUPABASE_URL` y `VITE_SUPABASE_ANON_KEY` (Project Settings → API en el dashboard de Supabase).
+4. `npm run deploy` como siempre — el cupo queda activo en el sitio publicado.
+
+Sin esas variables configuradas, el juego se lanza **sin límite** (no bloquea a nadie). Cada navegador que consigue acceso lo recuerda en `localStorage`, así que quien ya jugó no vuelve a gastar cupo ni se le corta a mitad de partida; alguien que borre sus datos o use otro navegador sí puede reclamar un cupo nuevo si aún queda — es una limitación conocida al no pedir cuentas de usuario.
+
+⚠️ El proyecto gratuito de Supabase se pausa tras ~1 semana sin actividad (y puede llegar a borrarse si queda pausado mucho tiempo — esto ya le pasó a otro proyecto del usuario). Con tráfico real del lanzamiento no debería ser problema, pero si el juego está inactivo varios días revisa el dashboard de Supabase.
+
 ## Pendiente / ideas futuras
 
 - Ajuste fino de los umbrales de gestos con cámara real (`src/camera/gestures.ts`)

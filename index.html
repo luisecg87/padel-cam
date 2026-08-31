@@ -14,7 +14,7 @@
 
   <div id="ui">
     <!-- Menú principal -->
-    <div class="screen active" id="menu">
+    <div class="screen" id="menu">
       <h1>🎾 Pádel Cam</h1>
       <p class="tagline">Juega pádel con tu cuerpo, desde el navegador</p>
 
@@ -54,14 +54,22 @@
       <p class="hint" id="menuHint"></p>
     </div>
 
+    <!-- Cupo gratuito lleno -->
+    <div class="screen" id="full">
+      <h1>🎾 Pádel Cam</h1>
+      <div class="calib-status err">Cupo gratuito lleno (<span id="fullCap"></span> jugadores)</div>
+      <p class="hint">Estamos preparando la forma de cobrar el acceso. Vuelve a pasar más adelante — ¡gracias por el interés!</p>
+    </div>
+
     <!-- Calibración de cámara -->
     <div class="screen" id="calib">
       <h2>📷 Calibración</h2>
-      <p>Coloca el dispositivo de modo que la cámara te vea <b>de la cintura hacia arriba</b>, a 1.5–2 metros.</p>
+      <p>Coloca el dispositivo de modo que te vea <b>de cuerpo entero, con los pies dentro del encuadre</b>, a 2.5–3.5 metros.</p>
       <div id="calibStatus" class="calib-status">Iniciando cámara…</div>
       <div class="calib-tips">
         <p>🏃 Muévete a los lados para desplazarte por la pista</p>
         <p>💪 Mueve el brazo rápido para golpear · brazo arriba = remate</p>
+        <p>🔄🦵 El juego también lee el giro de tus hombros y el paso hacia la bola</p>
       </div>
       <button class="big" id="btnCalibReady" disabled>¡Listo, a jugar!</button>
       <button class="link" id="btnCalibCancel">Volver al menú</button>

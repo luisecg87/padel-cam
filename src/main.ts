@@ -10,6 +10,7 @@ import { runCalibration } from './camera/calibration';
 import { ui } from './ui/screens';
 import { KeyboardTouchControl } from './ui/input';
 import type { ControlAdapter } from './ui/input';
+import { checkAccess } from './access/gate';
 
 const canvas = document.querySelector<HTMLCanvasElement>('#game')!;
 const video = document.querySelector<HTMLVideoElement>('#cam')!;
@@ -146,7 +147,14 @@ ui.onAgain = () => {
   else void startPractice();
 };
 
-startIdle();
+checkAccess().then((access) => {
+  if (access.granted) {
+    ui.show('menu');
+    startIdle();
+  } else {
+    ui.showFull(access.cap ?? Number(import.meta.env.VITE_FREE_CAP ?? 50));
+  }
+});
 
 // Gancho de depuración (útil para pruebas automatizadas)
 declare global {

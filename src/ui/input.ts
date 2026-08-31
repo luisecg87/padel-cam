@@ -3,6 +3,11 @@
 export interface SwingEvent {
   dir: -1 | 0 | 1; // hacia dónde se dirige el golpe (izq/centro/dcha)
   overhead: boolean; // gesto por encima de la cabeza (remate)
+  power: number; // 0..1, qué tan fuerte fue el swing real (1 = máximo detectado)
+  // Técnica corporal: solo la cámara puede medirla (teclado/táctil la deja
+  // sin definir, y el juego simplemente no evalúa técnica en ese caso).
+  shoulderTurn?: number; // 0..1, cuánto giraron los hombros al preparar el golpe
+  stepped?: boolean; // si hubo un desplazamiento real de los pies hacia la bola
 }
 
 export type MoveIntent =
@@ -32,6 +37,7 @@ export class KeyboardTouchControl implements ControlAdapter {
         dir: this.keys.has('ArrowLeft') || this.keys.has('KeyA') ? -1
           : this.keys.has('ArrowRight') || this.keys.has('KeyD') ? 1 : 0,
         overhead: this.keys.has('ArrowUp') || this.keys.has('KeyW'),
+        power: 1, // teclado/táctil no mide intensidad real: siempre potencia máxima
       });
     }
     if (e.code.startsWith('Arrow')) e.preventDefault();
@@ -53,6 +59,7 @@ export class KeyboardTouchControl implements ControlAdapter {
         this.swings.push({
           dir: rel < -0.33 ? -1 : rel > 0.33 ? 1 : 0,
           overhead: t.clientY < window.innerHeight * 0.35,
+          power: 1,
         });
       }
     }

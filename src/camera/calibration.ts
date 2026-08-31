@@ -49,11 +49,12 @@ export function runCalibration(
         const bodyOk =
           vis(LM.L_HIP) && vis(LM.R_HIP) &&
           vis(LM.L_SHOULDER) && vis(LM.R_SHOULDER) &&
+          vis(LM.L_ANKLE) && vis(LM.R_ANKLE) &&
           (vis(LM.L_WRIST) || vis(LM.R_WRIST));
 
         if (!bodyOk) {
           stable = 0;
-          ui.setCalibStatus('Te veo a medias: necesito verte de la cintura hacia arriba.', 'wait');
+          ui.setCalibStatus('Te veo a medias: aléjate hasta que se te vea de cuerpo entero (con los pies dentro).', 'wait');
         } else {
           stable++;
           if (stable >= STABLE_FRAMES) {

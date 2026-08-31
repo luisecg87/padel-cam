@@ -11,6 +11,9 @@ export interface ShotLog {
   z: number;
   afterWall: boolean;
   result: ShotResult;
+  // Técnica corporal (solo definida si se jugó con cámara; ver src/camera/technique.ts).
+  shoulderOk?: boolean;
+  stepOk?: boolean;
 }
 
 export interface PointLog {

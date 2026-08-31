@@ -3,6 +3,7 @@ import { COURT, sideOfZ } from '../game/court';
 import { PlayerEntity, REACH_X, REACH_Z } from '../game/player';
 import { Renderer } from '../game/render';
 import { computeShotVelocity, SHOT_PARAMS } from '../game/shots';
+import { evaluateTechnique } from '../camera/technique';
 import { GRAVITY, BALL_RADIUS } from '../game/ball';
 import { ui } from '../ui/screens';
 import { clamp, SHOT_ARTICLES, SHOT_NAMES } from '../types';
@@ -27,6 +28,8 @@ interface Attempt {
   quality: number;
   success: boolean;
   failReason: string | null;
+  shoulderOk: boolean | null; // null = no medible (control por teclado)
+  stepOk: boolean | null;
 }
 
 export class PracticeMode {
@@ -49,6 +52,7 @@ export class PracticeMode {
   private playerShotEvaluated = false;
   private currentAttempt: Attempt | null = null;
   private whiffCooldown = 0;
+  private techniqueTip: string | null = null; // del último golpe, para mostrarlo junto al resultado
 
   private raf = 0;
   private lastT = 0;
@@ -156,6 +160,8 @@ export class PracticeMode {
       quality: 0,
       success: false,
       failReason: null,
+      shoulderOk: null,
+      stepOk: null,
     };
     this.phase = 'ball';
     this.updateDrillHud(`🎯 ${this.hintFor(this.expected)}`);
@@ -254,17 +260,25 @@ export class PracticeMode {
     const quality = clamp(1 - (Math.abs(dx) / REACH_X) * 0.45 - (Math.abs(dz) / REACH_Z) * 0.45, 0.15, 1);
     const timing = b.pos.z - (p.z - 0.5);
 
+    const technique =
+      swing.shoulderTurn !== undefined && swing.stepped !== undefined
+        ? evaluateTechnique(type, swing.shoulderTurn, swing.stepped)
+        : null;
+
     if (this.currentAttempt) {
       this.currentAttempt.hitType = type;
       this.currentAttempt.timing = timing;
       this.currentAttempt.quality = quality;
+      this.currentAttempt.shoulderOk = technique?.shoulderOk ?? null;
+      this.currentAttempt.stepOk = technique?.stepOk ?? null;
     }
+    this.techniqueTip = technique?.tip ?? null;
 
     const aim = {
       x: clamp(swing.dir * 2.5 + (Math.random() - 0.5), -4.2, 4.2),
       z: 3.5 + Math.random() * 4,
     };
-    b.vel = computeShotVelocity(b.pos, aim, type, quality);
+    b.vel = computeShotVelocity(b.pos, aim, type, quality, swing.power);
     this.player.startSwing(type);
     this.lastHitBy = 'player';
     this.bounceCount = 0;
@@ -305,6 +319,9 @@ export class PracticeMode {
       this.streak++;
       this.bestStreak = Math.max(this.bestStreak, this.streak);
     }
+    // Feedback de técnica corporal (hombros/pies), aparte de si acertó el golpe.
+    if (a.hitType !== null && this.techniqueTip) fb += `<br>${this.techniqueTip}`;
+    this.techniqueTip = null;
     this.updateDrillHud(fb);
   }
 
@@ -329,12 +346,21 @@ export class PracticeMode {
       this.attempts.filter((a) => a.hitType !== null).reduce((s, a) => s + a.quality, 0) /
       Math.max(1, this.attempts.filter((a) => a.hitType !== null).length);
 
+    // Técnica corporal: solo hay datos si se jugó con cámara (con teclado queda en null).
+    const withTechnique = this.attempts.filter((a) => a.hitType !== null && a.shoulderOk !== null);
+    const shoulderBad = withTechnique.filter((a) => !a.shoulderOk).length;
+    const stepBad = withTechnique.filter((a) => !a.stepOk).length;
+
     const stats = [
       { lbl: 'Aciertos', val: `${hits} / ${this.attempts.length}` },
       { lbl: 'Mejor racha', val: `${this.bestStreak}` },
       { lbl: 'Calidad media', val: `${Math.round(avgQ * 100)}%` },
       { lbl: 'Golpes al aire', val: `${this.whiffs}` },
     ];
+    if (withTechnique.length > 0) {
+      const techOk = withTechnique.filter((a) => a.shoulderOk && a.stepOk).length;
+      stats.push({ lbl: 'Técnica correcta', val: `${Math.round((techOk / withTechnique.length) * 100)}%` });
+    }
 
     const tips: Report['tips'] = [];
     if (late >= 3) {
@@ -365,6 +391,18 @@ export class PracticeMode {
       tips.push({
         warn: true,
         text: `${this.whiffs} golpes al aire: no muevas el brazo hasta que la bola esté entrando en tu zona de alcance.`,
+      });
+    }
+    if (withTechnique.length >= 3 && shoulderBad / withTechnique.length >= 0.4) {
+      tips.push({
+        warn: true,
+        text: `En ${shoulderBad} golpes no preparaste bien el giro de hombros (o, en la volea, echaste demasiado el brazo atrás). Trabaja la postura antes del contacto.`,
+      });
+    }
+    if (withTechnique.length >= 3 && stepBad / withTechnique.length >= 0.4) {
+      tips.push({
+        warn: true,
+        text: `En ${stepBad} golpes no diste un paso real hacia la bola: estás golpeando solo con el brazo, sin mover los pies.`,
       });
     }
     if (hits >= this.attempts.length * 0.8 && this.attempts.length > 0) {

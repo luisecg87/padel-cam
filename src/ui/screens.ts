@@ -7,7 +7,7 @@ export interface MenuSettings {
   drill: DrillType;
 }
 
-type ScreenId = 'menu' | 'calib' | 'report' | 'none';
+type ScreenId = 'menu' | 'calib' | 'report' | 'full' | 'none';
 
 const $ = <T extends HTMLElement = HTMLElement>(sel: string): T => {
   const el = document.querySelector<T>(sel);
@@ -104,6 +104,11 @@ class UI {
     el.classList.toggle('ok', state === 'ok');
     el.classList.toggle('err', state === 'err');
     ($('#btnCalibReady') as HTMLButtonElement).disabled = state !== 'ok';
+  }
+
+  showFull(cap: number): void {
+    $('#fullCap').textContent = String(cap);
+    this.show('full');
   }
 
   showReport(title: string, report: Report): void {
