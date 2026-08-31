@@ -1,4 +1,6 @@
 import { LM, PoseTracker, drawPreview } from './pose';
+import { readBody } from '../training/metrics';
+import type { Level } from '../training/metrics';
 import { clamp } from '../types';
 import type { ControlAdapter, MoveIntent, SwingEvent } from '../ui/input';
 
@@ -13,27 +15,14 @@ interface WristSample {
   y: number;
 }
 
-interface ScalarSample {
-  t: number; // segundos
-  v: number;
-}
-
 // Umbrales relativos al ancho de hombros ("anchos de cuerpo por segundo"):
 // así la sensibilidad es la misma estés cerca o lejos de la cámara.
-const SWING_SPEED_BW = 6.5; // velocidad mínima de la muñeca
-const SWING_SPEED_MAX_BW = 15; // velocidad a partir de la cual el golpe ya cuenta como potencia máxima
-const SWING_MIN_DIST_BW = 0.55; // recorrido mínimo (evita disparos por ruido)
-const SWING_COOLDOWN = 0.5; // s entre golpes
-const HISTORY_MS = 170;
+// Exportados para que el modo entrenamiento use exactamente la misma detección.
+export const SWING_SPEED_BW = 6.5; // velocidad mínima de la muñeca
+export const SWING_MIN_DIST_BW = 0.55; // recorrido mínimo (evita disparos por ruido)
+export const SWING_COOLDOWN = 0.5; // s entre golpes
+export const HISTORY_MS = 170;
 const LATERAL_RANGE_BW = 3.0; // anchos de cuerpo que cubren media pista
-
-// Ventana más larga que el propio swing: la preparación (giro + paso) empieza
-// antes de que la muñeca acelere, así que hay que mirar hacia atrás más tiempo.
-const STANCE_HISTORY_MS = 500;
-// "z" de MediaPipe es aprox. la misma escala que "x" (ver tipos de @mediapipe/tasks-vision):
-// se compara contra el ancho de hombros igual que el resto de umbrales.
-const ROTATION_REF_BW = 0.55; // giro de hombros que cuenta como preparación completa
-const STEP_REF_BW = 0.4; // cambio de separación de tobillos que cuenta como paso real
 
 /**
  * Convierte los landmarks de MediaPipe en el control del juego:
@@ -48,8 +37,6 @@ export class CameraControl implements ControlAdapter {
   private swings: SwingEvent[] = [];
   private lastSwingT = 0;
   private history: Record<'L' | 'R', WristSample[]> = { L: [], R: [] };
-  private shoulderHistory: ScalarSample[] = []; // z hombro izq. - z hombro der. (giro)
-  private ankleHistory: ScalarSample[] = []; // separación lateral de tobillos (paso)
   private lastFrameT = 0;
   private preview: HTMLCanvasElement;
 
@@ -86,15 +73,6 @@ export class CameraControl implements ControlAdapter {
     const alpha = clamp(0.1 + Math.abs(diff) * 0.22, 0.1, 0.55);
     this.courtX += diff * alpha;
 
-    // --- Historial de giro de hombros y paso: ventana más larga que el
-    // swing, para capturar la preparación del golpe, no solo el contacto ---
-    if (vis(LM.L_SHOULDER) && vis(LM.R_SHOULDER)) {
-      this.pushScalar(this.shoulderHistory, t, lm[LM.L_SHOULDER].z - lm[LM.R_SHOULDER].z);
-    }
-    if (vis(LM.L_ANKLE) && vis(LM.R_ANKLE)) {
-      this.pushScalar(this.ankleHistory, t, Math.abs(lm[LM.L_ANKLE].x - lm[LM.R_ANKLE].x));
-    }
-
     // --- Detección de swings con las muñecas ---
     for (const hand of ['L', 'R'] as const) {
       const wi = hand === 'L' ? LM.L_WRIST : LM.R_WRIST;
@@ -125,51 +103,27 @@ export class CameraControl implements ControlAdapter {
       ) {
         this.lastSwingT = t;
         const shoulderY = (lm[LM.L_SHOULDER].y + lm[LM.R_SHOULDER].y) / 2;
-        // Remate: la muñeca estaba por encima de los hombros y baja con fuerza
+        // Golpe alto: la muñeca estaba por encima de los hombros y baja con fuerza
         const overhead = first.y < shoulderY && dy / dtw > 0.4;
         const vxBw = dx / dtw / bw;
         const dir: -1 | 0 | 1 = vxBw > 3 ? 1 : vxBw < -3 ? -1 : 0;
-        // Golpe suave vs. golpe fuerte: la velocidad real de la muñeca marca la potencia.
-        const power = clamp(
-          (speedBw - SWING_SPEED_BW) / (SWING_SPEED_MAX_BW - SWING_SPEED_BW),
-          0,
-          1,
-        );
-        this.swings.push({
-          dir,
-          overhead,
-          power,
-          shoulderTurn: this.computeShoulderTurn(bw),
-          stepped: this.computeStepped(bw),
-        });
+        // Fuerza del gesto: brazo lento arriba = bandeja, latigazo = remate
+        const power = clamp((speedBw - SWING_SPEED_BW) / 9, 0, 1);
+        // Forma técnica en el momento del golpe: alimenta el gameplay
+        const body = readBody(frame, 'forehand');
+        const lvl = (l: Level): number => (l === 'good' ? 1 : l === 'warn' ? 0.7 : 0.4);
+        const form = body
+          ? {
+              posture: (lvl(body.stance.level) + lvl(body.knees.level) + lvl(body.balance.level)) / 3,
+              extension: Math.hypot(sample.x - body.hipCenter.x, sample.y - body.hipCenter.y) / bw,
+            }
+          : { posture: 0.75, extension: null };
+        this.swings.push({ dir, overhead, power, form });
         this.history.L = [];
         this.history.R = [];
         break;
       }
     }
-  }
-
-  private pushScalar(hist: ScalarSample[], t: number, v: number): void {
-    hist.push({ t, v });
-    while (hist.length > 0 && t - hist[0].t > STANCE_HISTORY_MS / 1000) hist.shift();
-  }
-
-  /** 0..1: cuánto giraron los hombros (respecto al inicio de la ventana) al preparar el golpe. */
-  private computeShoulderTurn(bw: number): number {
-    if (this.shoulderHistory.length < 2) return 0;
-    const base = this.shoulderHistory[0].v;
-    let maxDev = 0;
-    for (const s of this.shoulderHistory) maxDev = Math.max(maxDev, Math.abs(s.v - base));
-    return clamp(maxDev / bw / ROTATION_REF_BW, 0, 1);
-  }
-
-  /** ¿Hubo un cambio real en la separación de los pies (paso/carga de peso) antes de golpear? */
-  private computeStepped(bw: number): boolean {
-    if (this.ankleHistory.length < 2) return false;
-    const base = this.ankleHistory[0].v;
-    let maxDev = 0;
-    for (const s of this.ankleHistory) maxDev = Math.max(maxDev, Math.abs(s.v - base));
-    return maxDev / bw > STEP_REF_BW;
   }
 
   getMove(): MoveIntent {

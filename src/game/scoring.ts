@@ -12,6 +12,12 @@ export class Score {
   games: Record<Side, number> = { player: 0, cpu: 0 };
   finished = false;
   winner: Side | null = null;
+  private targetGames: number;
+
+  /** targetGames: juegos para ganar (6 = set completo; 3 = set corto de torneo). */
+  constructor(targetGames = 6) {
+    this.targetGames = targetGames;
+  }
 
   /** Devuelve 'game' | 'match' | null según lo que se haya cerrado con este punto. */
   addPoint(side: Side): 'game' | 'match' | null {
@@ -26,7 +32,7 @@ export class Score {
       this.games[side]++;
       const g = this.games[side];
       const go = this.games[other];
-      if ((g >= 6 && g - go >= 2) || g === 7) {
+      if ((g >= this.targetGames && g - go >= 2) || g === this.targetGames + 1) {
         this.finished = true;
         this.winner = side;
         return 'match';

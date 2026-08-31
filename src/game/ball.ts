@@ -14,6 +14,7 @@ export interface BallCallbacks {
 export class Ball {
   pos: Vec3 = { x: 0, y: 1, z: 15 };
   vel: Vec3 = { x: 0, y: 0, z: 0 };
+  spin = 0; // aceleración lateral (víbora): curva la bola en el aire
   active = false; // si la física está corriendo (false = bola en mano / punto terminado)
   trail: Vec3[] = []; // últimas posiciones, para la estela
   callbacks: BallCallbacks = {};
@@ -21,6 +22,7 @@ export class Ball {
   reset(pos: Vec3): void {
     this.pos = { ...pos };
     this.vel = { x: 0, y: 0, z: 0 };
+    this.spin = 0;
     this.active = false;
     this.trail.length = 0;
   }
@@ -28,6 +30,7 @@ export class Ball {
   launch(pos: Vec3, vel: Vec3): void {
     this.pos = { ...pos };
     this.vel = { ...vel };
+    this.spin = 0;
     this.active = true;
     this.trail.length = 0;
   }
@@ -48,6 +51,7 @@ export class Ball {
     const prev = { ...this.pos };
 
     this.vel.y -= GRAVITY * dt;
+    this.vel.x += this.spin * dt;
     this.pos.x += this.vel.x * dt;
     this.pos.y += this.vel.y * dt;
     this.pos.z += this.vel.z * dt;
@@ -74,6 +78,9 @@ export class Ball {
       this.vel.y = -this.vel.y * 0.72;
       this.vel.x *= 0.85;
       this.vel.z *= 0.85;
+      // La víbora "escupe" hacia el lado en el bote y pierde parte del efecto
+      this.vel.x += this.spin * 0.25;
+      this.spin *= 0.45;
       if (Math.abs(this.vel.y) < 0.4) this.vel.y = 0;
       this.callbacks.onGround?.({ ...this.pos });
     }
@@ -84,6 +91,7 @@ export class Ball {
       if (this.pos.y < COURT.wallHeight) {
         this.pos.x = Math.sign(this.pos.x) * maxX;
         this.vel.x = -this.vel.x * 0.7;
+        this.spin = -this.spin * 0.5;
         this.callbacks.onWall?.({ ...this.pos });
       } else {
         this.active = false;

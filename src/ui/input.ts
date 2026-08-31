@@ -1,13 +1,16 @@
 // Adaptador de control común: teclado/táctil y cámara implementan esta interfaz.
 
+/** Calidad técnica del gesto real (solo con cámara): afecta al gameplay. */
+export interface SwingForm {
+  posture: number; // 0..1: postura en el momento del golpe (piernas, base, equilibrio)
+  extension: number | null; // distancia muñeca-cadera en anchos de hombro (punto de impacto)
+}
+
 export interface SwingEvent {
   dir: -1 | 0 | 1; // hacia dónde se dirige el golpe (izq/centro/dcha)
-  overhead: boolean; // gesto por encima de la cabeza (remate)
-  power: number; // 0..1, qué tan fuerte fue el swing real (1 = máximo detectado)
-  // Técnica corporal: solo la cámara puede medirla (teclado/táctil la deja
-  // sin definir, y el juego simplemente no evalúa técnica en ese caso).
-  shoulderTurn?: number; // 0..1, cuánto giraron los hombros al preparar el golpe
-  stepped?: boolean; // si hubo un desplazamiento real de los pies hacia la bola
+  overhead: boolean; // gesto por encima de la cabeza (remate/bandeja/víbora)
+  power: number; // 0..1: fuerza del gesto (cámara: velocidad de la muñeca)
+  form?: SwingForm; // presente solo cuando el golpe viene de la cámara
 }
 
 export type MoveIntent =
@@ -19,6 +22,66 @@ export interface ControlAdapter {
   getMove(): MoveIntent;
   consumeSwings(): SwingEvent[];
   destroy(): void;
+}
+
+/**
+ * Teclado dividido para el duelo local: cada jugador usa una mitad.
+ * 'wasd' = WASD + ESPACIO (jugador cercano) · 'arrows' = flechas + ENTER (jugador de fondo).
+ */
+export class SplitKeyboardControl implements ControlAdapter {
+  private keys = new Set<string>();
+  private swings: SwingEvent[] = [];
+  private map: { left: string; right: string; up: string; down: string; hit: string[] };
+
+  constructor(scheme: 'wasd' | 'arrows') {
+    this.map =
+      scheme === 'wasd'
+        ? { left: 'KeyA', right: 'KeyD', up: 'KeyW', down: 'KeyS', hit: ['Space', 'KeyF'] }
+        : { left: 'ArrowLeft', right: 'ArrowRight', up: 'ArrowUp', down: 'ArrowDown', hit: ['Enter', 'Numpad0'] };
+    window.addEventListener('keydown', this.onKeyDown);
+    window.addEventListener('keyup', this.onKeyUp);
+  }
+
+  private onKeyDown = (e: KeyboardEvent): void => {
+    if (e.repeat) return;
+    this.keys.add(e.code);
+    if (this.map.hit.includes(e.code)) {
+      e.preventDefault();
+      this.swings.push({
+        dir: this.keys.has(this.map.left) ? -1 : this.keys.has(this.map.right) ? 1 : 0,
+        overhead: this.keys.has(this.map.up),
+        power: 1,
+      });
+    }
+    if (e.code.startsWith('Arrow')) e.preventDefault();
+  };
+
+  private onKeyUp = (e: KeyboardEvent): void => {
+    this.keys.delete(e.code);
+  };
+
+  update(_dt: number): void {}
+
+  getMove(): MoveIntent {
+    let x = 0;
+    let z = 0;
+    if (this.keys.has(this.map.left)) x -= 1;
+    if (this.keys.has(this.map.right)) x += 1;
+    if (this.keys.has(this.map.up)) z -= 1;
+    if (this.keys.has(this.map.down)) z += 1;
+    return { mode: 'velocity', x, z };
+  }
+
+  consumeSwings(): SwingEvent[] {
+    const s = this.swings;
+    this.swings = [];
+    return s;
+  }
+
+  destroy(): void {
+    window.removeEventListener('keydown', this.onKeyDown);
+    window.removeEventListener('keyup', this.onKeyUp);
+  }
 }
 
 export class KeyboardTouchControl implements ControlAdapter {
@@ -37,7 +100,7 @@ export class KeyboardTouchControl implements ControlAdapter {
         dir: this.keys.has('ArrowLeft') || this.keys.has('KeyA') ? -1
           : this.keys.has('ArrowRight') || this.keys.has('KeyD') ? 1 : 0,
         overhead: this.keys.has('ArrowUp') || this.keys.has('KeyW'),
-        power: 1, // teclado/táctil no mide intensidad real: siempre potencia máxima
+        power: 1, // con teclado, ↑/W marca remate; sin ↑ la bola alta sale de bandeja
       });
     }
     if (e.code.startsWith('Arrow')) e.preventDefault();

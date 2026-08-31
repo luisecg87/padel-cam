@@ -1,6 +1,7 @@
 import { clamp } from '../types';
 import type { Side, ShotType } from '../types';
 import { COURT } from './court';
+import { loadProfile } from '../profile';
 
 export const REACH_X = 1.7; // alcance lateral para golpear (m)
 export const REACH_Z = 2.0; // alcance en profundidad (m)
@@ -10,6 +11,11 @@ export class PlayerEntity {
   x = 0;
   z: number;
   speed = 6.5; // m/s
+  // Mano dominante: puramente identidad/render (qué mano sostiene la pala).
+  // No afecta física, IA ni clasificación de golpe (forehand/backhand se
+  // sigue decidiendo por el lado geométrico de la bola). Fallback a diestro
+  // hasta que exista un perfil de usuario que lo fije explícitamente.
+  dominantHand: 'left' | 'right' = 'right';
   // Animación de golpe
   swingType: ShotType | null = null;
   swingT = 0; // 0..1
@@ -25,6 +31,9 @@ export class PlayerEntity {
     this.z = side === 'player' ? 17.5 : 2.5;
     this.prevX = this.x;
     this.prevZ = this.z;
+    // El avatar del jugador humano respeta la lateralidad de su perfil;
+    // la CPU se queda con el fallback diestro.
+    if (side === 'player') this.dominantHand = loadProfile().dominantHand;
   }
 
   get baseZ(): number {

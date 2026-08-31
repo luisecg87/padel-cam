@@ -10,6 +10,8 @@ export interface StatCard {
 export interface Tip {
   text: string;
   warn: boolean;
+  /** Clave estable para agrupar la misma corrección entre sesiones guardadas. */
+  id?: string;
 }
 
 export interface Report {
@@ -43,11 +45,6 @@ export function analyzeMatch(log: MatchLogger): Report {
   const lateShots = playerShots.filter((s) => s.timing > 0.45).length;
   const lateFrac = playerShots.length ? lateShots / playerShots.length : 0;
 
-  // Técnica corporal: solo hay datos si se jugó con cámara (con teclado quedan undefined).
-  const withTechnique = playerShots.filter((s) => s.shoulderOk !== undefined);
-  const shoulderBad = withTechnique.filter((s) => !s.shoulderOk).length;
-  const stepBad = withTechnique.filter((s) => !s.stepOk).length;
-
   // Puntos en la red: el jugador golpeó al menos una vez adelantado
   const netPoints = points.filter((p) =>
     p.shots.some((s) => s.by === 'player' && s.z < NET_ZONE_Z),
@@ -73,15 +70,12 @@ export function analyzeMatch(log: MatchLogger): Report {
     { lbl: 'Dobles faltas', val: `${doubleFaults}` },
     { lbl: 'Golpes por punto', val: avgRally.toFixed(1) },
   ];
-  if (withTechnique.length > 0) {
-    const techOk = withTechnique.filter((s) => s.shoulderOk && s.stepOk).length;
-    stats.push({ lbl: 'Técnica correcta', val: `${Math.round((techOk / withTechnique.length) * 100)}%` });
-  }
 
   const tips: Tip[] = [];
 
   if (lateFrac > 0.4 && lateShots >= 3) {
     tips.push({
+      id: 'timing-tarde',
       warn: true,
       text: `Llegaste tarde al ${Math.round(lateFrac * 100)}% de tus golpes. Prepara la pala en cuanto la bola cruce la red y da un paso hacia ella, no la esperes.`,
     });
@@ -99,6 +93,7 @@ export function analyzeMatch(log: MatchLogger): Report {
   }
   if (worst) {
     tips.push({
+      id: `golpe-debil-${worst.type}`,
       warn: true,
       text: `Tu ${SHOT_NAMES[worst.type]} falló el ${Math.round(worst.errRate * 100)}% de las veces. Entrénalo en el Modo Práctica eligiendo ese golpe.`,
     });
@@ -111,26 +106,15 @@ export function analyzeMatch(log: MatchLogger): Report {
     });
   } else if (total >= 8 && netPoints.length <= Math.max(1, total * 0.15)) {
     tips.push({
+      id: 'subir-red',
       warn: true,
       text: 'Casi no subiste a la red: jugaste casi todo desde el fondo. Tras un golpe profundo, avanza hacia la red para cerrar el punto.',
     });
   }
 
-  if (withTechnique.length >= 4 && shoulderBad / withTechnique.length >= 0.4) {
-    tips.push({
-      warn: true,
-      text: `En ${shoulderBad} de tus golpes no preparaste bien el giro de hombros (o, en la volea, echaste demasiado el brazo atrás). Entra al Modo Práctica para trabajar la postura.`,
-    });
-  }
-  if (withTechnique.length >= 4 && stepBad / withTechnique.length >= 0.4) {
-    tips.push({
-      warn: true,
-      text: `En ${stepBad} de tus golpes no diste un paso real hacia la bola: estás golpeando solo con el brazo, sin cargar el peso del cuerpo.`,
-    });
-  }
-
   if (doubleFaults >= 2) {
     tips.push({
+      id: 'dobles-faltas',
       warn: true,
       text: `Cometiste ${doubleFaults} dobles faltas. En el segundo saque no busques la esquina: apunta al centro de la caja y asegura.`,
     });
@@ -138,6 +122,7 @@ export function analyzeMatch(log: MatchLogger): Report {
 
   if (log.whiffs >= 3) {
     tips.push({
+      id: 'golpes-al-aire',
       warn: true,
       text: `Diste ${log.whiffs} golpes al aire. Mira la bola hasta el final y golpea cuando esté a la altura de tu cadera, ni antes ni después.`,
     });
@@ -145,6 +130,7 @@ export function analyzeMatch(log: MatchLogger): Report {
 
   if (wallErrors >= 2) {
     tips.push({
+      id: 'juego-pared',
       warn: true,
       text: 'La pared te costó puntos: no golpees la bola pegada al cristal. Deja que salga de la pared y golpéala cuando se separe.',
     });

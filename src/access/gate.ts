@@ -2,9 +2,13 @@
 // para que no se pueda evadir solo abriendo una ventana de incógnito nueva.
 // Una vez que un navegador consigue su cupo, queda recordado en localStorage
 // para no volver a descontarlo ni bloquear a quien ya jugó.
+//
+// Reutiliza el mismo proyecto Supabase que src/cloud.ts (cuentas en la
+// nube): una función SQL propia (`claim_free_slot`, ver supabase.sql) hace
+// esto compatible con las tablas/policies que ya existen ahí.
 
-const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
-const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY;
+import { SUPABASE_URL, SUPABASE_ANON_KEY } from '../cloud';
+
 const STORAGE_KEY = 'padel_access_granted';
 
 export interface AccessResult {
@@ -21,14 +25,6 @@ interface ClaimRow {
 
 export async function checkAccess(): Promise<AccessResult> {
   if (localStorage.getItem(STORAGE_KEY) === '1') {
-    return { granted: true };
-  }
-
-  if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
-    console.warn(
-      '[padel-cam] Tope de acceso gratuito no configurado ' +
-        '(faltan VITE_SUPABASE_URL / VITE_SUPABASE_ANON_KEY); se permite jugar sin límite.',
-    );
     return { granted: true };
   }
 
