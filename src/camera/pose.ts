@@ -56,9 +56,42 @@ export class PoseTracker {
   private stream: MediaStream | null = null;
   private raf = 0;
   private lastVideoTime = -1;
+  private wakeLock: WakeLockSentinel | null = null;
 
   constructor(video: HTMLVideoElement) {
     this.video = video;
+    document.addEventListener('visibilitychange', this.onVisibilityChange);
+  }
+
+  // El wake lock se libera solo cuando la pestaña deja de estar visible
+  // (p. ej. el usuario cambia de app un momento); hay que volver a pedirlo
+  // al recuperar el foco o la pantalla podría apagarse a mitad de sesión.
+  private onVisibilityChange = (): void => {
+    if (this.running && document.visibilityState === 'visible' && !this.wakeLock) {
+      void this.requestWakeLock();
+    }
+  };
+
+  // Entrenamiento/partido con cámara: el jugador está a 1.5-2 m sin tocar
+  // la pantalla, así que el sistema la apagaría solo a mitad de sesión.
+  // Sin soporte (o si el navegador lo rechaza) el juego sigue igual, solo
+  // que la pantalla puede apagarse.
+  private async requestWakeLock(): Promise<void> {
+    try {
+      if ('wakeLock' in navigator) {
+        this.wakeLock = await navigator.wakeLock.request('screen');
+        this.wakeLock.addEventListener('release', () => {
+          this.wakeLock = null;
+        });
+      }
+    } catch {
+      this.wakeLock = null;
+    }
+  }
+
+  private releaseWakeLock(): void {
+    void this.wakeLock?.release();
+    this.wakeLock = null;
   }
 
   async start(): Promise<void> {
@@ -96,6 +129,7 @@ export class PoseTracker {
     }
 
     this.running = true;
+    void this.requestWakeLock();
     const loop = () => {
       if (!this.running) return;
       this.detect();
@@ -121,6 +155,7 @@ export class PoseTracker {
   /** Genera una figura de pie con balanceo sutil; window.__fakeSwing lanza gestos. */
   private startFake(): void {
     this.running = true;
+    void this.requestWakeLock();
     let swing: { t0: number; kind: 'low' | 'high' | 'left' } | null = null;
     (window as unknown as Record<string, unknown>).__fakeSwing = (kind: 'low' | 'high' | 'left') => {
       swing = { t0: performance.now(), kind };
@@ -178,6 +213,7 @@ export class PoseTracker {
     this.landmarker?.close();
     this.landmarker = null;
     this.stopStream();
+    this.releaseWakeLock();
     this.latest = null;
   }
 }

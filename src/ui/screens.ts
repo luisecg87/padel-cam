@@ -519,6 +519,25 @@ class UI {
     ($('#btnCalibReady') as HTMLButtonElement).disabled = state !== 'ok';
   }
 
+  /**
+   * Número grande de la cuenta atrás (3, 2, 1) durante el arranque
+   * automático de la calibración. `null` la oculta (se está buscando pose
+   * o construyendo estabilidad todavía, sin cuenta atrás en marcha).
+   */
+  setCalibCountdown(n: number | null): void {
+    const el = $('#calibCountdown');
+    if (n === null) {
+      el.hidden = true;
+      return;
+    }
+    el.textContent = String(n);
+    el.hidden = false;
+    // Reinicia la animación de "pop" en cada número nuevo.
+    el.classList.remove('calib-countdown');
+    void (el as HTMLElement).offsetWidth;
+    el.classList.add('calib-countdown');
+  }
+
   /** Cupo gratuito lleno: pantalla de bloqueo, sin acceso a ningún modo. */
   showFull(cap: number): void {
     $('#fullCap').textContent = String(cap);

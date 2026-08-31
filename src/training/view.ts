@@ -363,7 +363,16 @@ export class CameraTrainingView {
       phaseTxt = '¡AHORA!';
       phaseCls = 'good';
     }
-    if (phaseEl.textContent !== phaseTxt) phaseEl.textContent = phaseTxt;
+    if (phaseEl.textContent !== phaseTxt) {
+      phaseEl.textContent = phaseTxt;
+      // El jugador está lejos de la pantalla y el texto de fase es chico:
+      // sin voz, la sesión "empieza sola" en cuanto se detecta el cuerpo,
+      // sin que dé tiempo a leer qué golpe toca ni a prepararse.
+      if (s.phase === 'searching') sfx.speak('Colócate frente a la cámara');
+      else if (s.phase === 'announce') sfx.speak(SHOT_NAMES[s.shot]);
+      else if (s.phase === 'prep') sfx.speak('Prepárate');
+      else if (s.phase === 'strike') sfx.speak('Ya');
+    }
     phaseEl.className = `train-phase ${phaseCls}`;
 
     // Feedback grande del resultado

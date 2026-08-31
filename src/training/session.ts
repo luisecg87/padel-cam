@@ -212,7 +212,7 @@ export class TrainingSession {
       this.nextShot();
       // Nueva repetición → nueva posición de impacto (más lejos del cuerpo
       // y a distinta altura), para que ningún golpe caiga en el mismo punto.
-      this.zoneSpread = { x: Math.random() * 0.28, y: (Math.random() - 0.5) * 0.3 };
+      this.zoneSpread = { x: Math.random() * 0.65, y: (Math.random() - 0.5) * 0.4 };
     }
     if (p === 'strike') {
       this.ringT = 1;

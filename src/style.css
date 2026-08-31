@@ -214,6 +214,21 @@ button {
 }
 .calib-status.ok { background: rgba(46,204,113,.25); }
 .calib-status.err { background: rgba(231,76,60,.3); }
+
+/* Cuenta atrás de calibración: grande a propósito, el jugador está a
+   1.5-2 m de la pantalla y no debe entrecerrar los ojos para verla. */
+.calib-countdown {
+  font-size: clamp(5rem, 24vw, 9rem);
+  font-weight: 800;
+  line-height: 1;
+  color: #2ecc71;
+  text-shadow: 0 4px 24px rgba(46, 204, 113, .5);
+  animation: calibCountdownPop .35s ease-out;
+}
+@keyframes calibCountdownPop {
+  from { transform: scale(1.35); opacity: .4; }
+  to { transform: scale(1); opacity: 1; }
+}
 .calib-tips p { opacity: .75; font-size: .95rem; margin: 4px 0; }
 .calib-privacy {
   font-size: .82rem; opacity: .7; max-width: 340px; line-height: 1.5;

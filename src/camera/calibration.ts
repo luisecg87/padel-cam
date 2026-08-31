@@ -38,6 +38,7 @@ export function runCalibration(
     ui.show('calib');
     ui.setCamPreviewVisible(true);
     ui.setCalibStatus('Buscándote… colócate frente a la cámara', 'wait');
+    ui.setCalibCountdown(null);
 
     ui.onCalibReady = () => finish(lastCalib);
     ui.onCalibCancel = () => finish(null);
@@ -51,6 +52,7 @@ export function runCalibration(
         stable = 0;
         countdownStart = null;
         ui.setCalibStatus('No te veo. Aléjate un poco y busca buena luz.', 'wait');
+        ui.setCalibCountdown(null);
         sfx.speak('No te veo. Aléjate un poco y busca buena luz.');
       } else {
         const lm = frame.lm;
@@ -64,6 +66,7 @@ export function runCalibration(
           stable = 0;
           countdownStart = null;
           ui.setCalibStatus('Te veo a medias: necesito verte de la cintura hacia arriba.', 'wait');
+          ui.setCalibCountdown(null);
           // El jugador está a 1.5-2 m: no puede leer este texto, así que se lo decimos.
           sfx.speak('Te veo a medias. Necesito verte de la cintura para arriba.');
         } else {
@@ -85,11 +88,13 @@ export function runCalibration(
               return;
             }
             const secs = Math.ceil(remaining);
-            ui.setCalibStatus(`✅ ¡Te veo! Empezamos en ${secs}…`, 'ok');
+            ui.setCalibStatus('✅ ¡Te veo! Prepárate…', 'ok');
+            ui.setCalibCountdown(secs);
             sfx.speak(String(secs));
           } else {
             countdownStart = null;
             ui.setCalibStatus(`Quieto ahí… (${Math.round((stable / STABLE_FRAMES) * 100)}%)`, 'wait');
+            ui.setCalibCountdown(null);
           }
         }
       }
