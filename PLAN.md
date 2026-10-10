@@ -244,7 +244,11 @@ software no es representativo).
 
 ## 6. Despliegue
 
-- **GitHub Pages** (`npm run deploy`): build + push forzado a `gh-pages`.
+- **GitHub Pages, automático**: cada push a `master` lanza
+  `.github/workflows/deploy.yml` (typecheck + build + push forzado a
+  `gh-pages`). `npm run deploy` queda solo como vía manual de emergencia.
+- `.github/workflows/supabase-ping.yml` hace una consulta diaria para que el
+  plan gratuito de Supabase no pause el proyecto.
   URL pública HTTPS → el modo cámara funciona ahí (getUserMedia exige HTTPS)
   y también desde móviles.
 - MediaPipe descarga modelo/wasm de CDNs (jsdelivr + storage.googleapis.com)

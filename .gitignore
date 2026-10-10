@@ -1,7 +1,5 @@
 node_modules/
 dist/
-# El despliegue automático por Actions sigue sin activar (se publica con npm run deploy)
-.github/workflows/deploy.yml
 .DS_Store
 *.local
 .env

@@ -26,8 +26,14 @@ npm run dev          # localhost:5173
 npm run typecheck    # debe salir limpio siempre
 npm run build        # → dist/
 npm run preview      # los scripts de prueba esperan --port 4173
-npm run deploy       # publica a https://luisecg87.github.io/padel-cam/
+npm run deploy       # publicación MANUAL de emergencia (lo normal: push a master)
 ```
+
+## Despliegue
+
+Cada push a `master` publica solo en https://luisecg87.github.io/padel-cam/
+(`.github/workflows/deploy.yml`: typecheck + build + rama `gh-pages`). Lo que
+hay en `master` ES producción: no hacer push a `master` de nada sin validar.
 
 ## Validación mínima antes de commit
 
