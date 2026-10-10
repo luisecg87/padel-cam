@@ -1,0 +1,29 @@
+name: Ping a Supabase
+
+# El plan gratuito de Supabase pausa el proyecto tras ~7 días sin actividad
+# (y lo borra si pasa mucho tiempo en pausa). Una consulta mínima al día lo
+# mantiene activo. Si falla, GitHub avisa por correo: sirve también de alarma
+# de que la nube del juego (cuentas y tope de accesos) se ha caído.
+
+on:
+  schedule:
+    - cron: '17 6 * * *' # todos los días a las 06:17 UTC
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Consulta mínima a la base de datos
+        env:
+          # URL y clave pública del proyecto: las mismas que viajan en el
+          # bundle del juego (src/cloud.ts). No son secretas.
+          SUPABASE_URL: https://kbzepoqqggonpsfaovma.supabase.co
+          SUPABASE_KEY: sb_publishable_qTbiz5RgGjyseBcGRBRXDg_9x3h9ICV
+        run: |
+          code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 30 --retry 3 --retry-delay 20 --retry-all-errors \
+            "$SUPABASE_URL/rest/v1/jugadores?select=id&limit=1" -H "apikey: $SUPABASE_KEY")
+          echo "Supabase respondió: $code"
+          test "$code" = "200"

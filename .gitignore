@@ -1,7 +1,7 @@
 node_modules/
 dist/
-# Temporal: el token de gh aún no tiene scope "workflow"; quitar cuando se autorice
-.github/
+# El despliegue automático por Actions sigue sin activar (se publica con npm run deploy)
+.github/workflows/deploy.yml
 .DS_Store
 *.local
 .env
