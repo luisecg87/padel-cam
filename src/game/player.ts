@@ -2,6 +2,7 @@ import { clamp } from '../types';
 import type { Side, ShotType } from '../types';
 import { COURT } from './court';
 import { loadProfile } from '../profile';
+import type { LivePose } from '../ui/input';
 
 export const REACH_X = 1.7; // alcance lateral para golpear (m)
 export const REACH_Z = 2.0; // alcance en profundidad (m)
@@ -23,6 +24,9 @@ export class PlayerEntity {
   runPhase = 0;
   moveAmount = 0; // 0..1, cuánto se está moviendo
   lean = 0; // inclinación lateral al correr
+  // Pose real del jugador (solo con cámara): si está, el renderer dibuja
+  // los brazos donde los tiene de verdad. Puramente visual, como dominantHand.
+  livePose: LivePose | null = null;
   private prevX: number;
   private prevZ: number;
 

@@ -12,7 +12,7 @@ import type { SwingForm } from '../ui/input';
 import { CPU_PALETTE } from './render';
 import type { GameRenderer } from './renderers/GameRenderer';
 import type { Rival } from '../modes/tournament';
-import type { ControlAdapter, SwingEvent } from '../ui/input';
+import type { ControlAdapter, LivePose, SwingEvent } from '../ui/input';
 import type { ControlMode, Difficulty, Side, ShotType } from '../types';
 
 type MatchState = 'preServe' | 'rally' | 'pointOver' | 'replay' | 'done';
@@ -139,14 +139,39 @@ export class MatchMode {
     b: [number, number, number, number];
     p: [number, number, ShotType | null, number];
     c: [number, number, ShotType | null, number];
+    sc: [number, number, number, number];
+    serve: string;
+    toast: string;
+    toastN: number;
     replay: boolean;
+    pose: LivePose | null;
   } {
     return {
       b: [this.ball.pos.x, this.ball.pos.y, this.ball.pos.z, this.ball.active ? 1 : 0],
       p: [this.player.x, this.player.z, this.player.swingType, this.player.swingT],
       c: [this.cpu.x, this.cpu.z, this.cpu.swingType, this.cpu.swingT],
+      sc: [this.score.games.player, this.score.games.cpu, this.score.points.player, this.score.points.cpu],
+      serve: this.hud.serve,
+      toast: this.hud.toast,
+      toastN: this.hud.toastN,
       replay: this.state === 'replay',
+      pose: this.player.livePose,
     };
+  }
+
+  // Los mensajes del HUD pasan por aquí para que el online pueda
+  // retransmitirlos al invitado tal cual los ve el anfitrión.
+  private hud = { serve: '', toast: '', toastN: 0 };
+
+  private toast(text: string, ms?: number): void {
+    this.hud.toast = text;
+    this.hud.toastN++;
+    ui.toast(text, ms);
+  }
+
+  private setServe(text: string): void {
+    this.hud.serve = text;
+    ui.setServeInfo(text);
   }
 
   start(): void {
@@ -209,7 +234,7 @@ export class MatchMode {
     this.postFrames = 0;
     this.pendingReplay = false;
 
-    ui.setServeInfo(
+    this.setServe(
       server === 'player'
         ? `${this.isDuel ? `Saque de ${this.p1Name}` : 'Tu saque'} (${this.serveNumber}º) · golpea para sacar`
         : `Saque de ${this.rivalName} (${this.serveNumber}º)${this.isDuel ? ' · golpea para sacar' : ''}`,
@@ -252,7 +277,7 @@ export class MatchMode {
     sfx.fault();
     if (this.serveNumber === 1) {
       this.serveNumber = 2;
-      ui.toast('¡Falta de saque!', 1100);
+      this.toast('¡Falta de saque!', 1100);
       this.state = 'pointOver';
       this.pointOverTimer = 1.1;
     } else {
@@ -356,7 +381,7 @@ export class MatchMode {
       if (winner === 'player') sfx.pointWin();
       else sfx.pointLose();
     }
-    ui.toast(msg, res === 'match' ? 2400 : 1600);
+    this.toast(msg, res === 'match' ? 2400 : 1600);
 
     this.serveNumber = 1;
     this.pointOverTimer = res === 'match' ? 2.4 : 1.7;
@@ -404,7 +429,7 @@ export class MatchMode {
       else if (this.lastPlayerTiming > 0.5) advice = 'prepara la pala antes: estás llegando tarde';
       else if (this.lastPlayerTiming < -0.5) advice = 'espera la bola, estás golpeando antes de tiempo';
       else advice = 'apunta al centro un par de bolas y recupera sensaciones';
-      window.setTimeout(() => ui.toast(`🧑‍🏫 Coach: ${advice}`, 2200), 1200);
+      window.setTimeout(() => this.toast(`🧑‍🏫 Coach: ${advice}`, 2200), 1200);
     }
   }
 
@@ -425,7 +450,7 @@ export class MatchMode {
     if (this.state !== 'rally' || this.lastHitBy === side) return;
 
     if (this.isServe && !this.serveBounced) {
-      ui.toast('Deja botar el saque', 900);
+      this.toast('Deja botar el saque', 900);
       return;
     }
 
@@ -487,7 +512,7 @@ export class MatchMode {
       this.lastPlayerTiming = timing;
       if (quality > 0.7) {
         this.goodRun++;
-        if (this.goodRun === 3) ui.toast('🔥 ¡En racha!', 900);
+        if (this.goodRun === 3) this.toast('🔥 ¡En racha!', 900);
         ui.setFire(this.goodRun);
       } else {
         this.goodRun = 0;
@@ -616,6 +641,9 @@ export class MatchMode {
     this.opts.controlP2?.update(dt);
 
     if (this.state === 'replay') {
+      // La repetición muestra lo grabado, no los brazos de ahora
+      this.player.livePose = null;
+      this.cpu.livePose = null;
       // Cualquier golpe o movimiento del jugador salta la repetición al
       // instante en vez de descartarlo en silencio: quien está probando el
       // juego rápido (o jugando de verdad) no debería quedarse esperando
@@ -635,6 +663,10 @@ export class MatchMode {
     for (const swing of this.opts.controlP2?.consumeSwings() ?? []) {
       this.tryHumanSwing('cpu', swing);
     }
+
+    // Pose real en vivo (solo visual): los brazos del avatar siguen a los del jugador
+    this.player.livePose = this.opts.control.getPose?.() ?? null;
+    this.cpu.livePose = this.opts.controlP2?.getPose?.() ?? null;
 
     // Movimiento del jugador
     const move = this.opts.control.getMove();
@@ -659,7 +691,7 @@ export class MatchMode {
       } else if (this.isDuel) {
         this.preServeIdle += dt;
         if (this.preServeIdle > 12) {
-          ui.toast('Saque automático por inactividad', 1200);
+          this.toast('Saque automático por inactividad', 1200);
           this.doServe(0);
         }
       }

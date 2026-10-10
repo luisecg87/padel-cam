@@ -144,6 +144,7 @@
         <div id="coachLevel" class="coach-level"></div>
         <div id="coachXpBar" class="coach-xpbar"><div id="coachXpFill"></div></div>
         <div id="coachStreak" class="coach-streak"></div>
+        <div id="coachGoal" class="coach-goal"></div>
         <div id="coachTip" class="coach-tip"></div>
         <button class="opt" id="btnCoachTrain" hidden>🎯 Entrenar esto ahora</button>
       </div>
@@ -269,6 +270,7 @@
     <div class="screen" id="challenges">
       <h2>🎯 Desafíos</h2>
       <p class="hint">Tu gesto real controla el golpe: el timing da precisión, la potencia da velocidad y la mala postura penaliza. Consigue las 3 estrellas.</p>
+      <p class="duel-banner" id="challengeDuel" hidden></p>
       <div id="challengeList" class="progress-list"></div>
       <button class="link" id="btnChallengesBack">Volver al menú</button>
     </div>
@@ -280,8 +282,10 @@
       <div class="ce-score"><span id="ceScore">0</span><span class="lbl" id="ceUnit">pts</span></div>
       <p class="hint" id="ceRecord"></p>
       <p class="ce-xp" id="ceXp"></p>
+      <p class="duel-banner" id="ceDuel" hidden></p>
       <div class="main-buttons">
         <button class="big" id="btnChallengeAgain">Reintentar</button>
+        <button class="big secondary" id="btnChallengeShare">⚔️ Retar a un amigo</button>
         <button class="link" id="btnChallengeList">Otros desafíos</button>
         <button class="link" id="btnChallengeMenu">Volver al menú</button>
       </div>
@@ -319,10 +323,15 @@
     <!-- Partida online 1v1 -->
     <div class="screen" id="online">
       <h2>🌐 Online 1 vs 1</h2>
-      <p class="hint">Juega contra otra persona, cada uno desde su dispositivo (y con su propia cámara si quiere). Uno crea la partida y comparte el código; el otro se une. Set corto a 3 juegos.</p>
+      <p class="hint">Juega contra otra persona, cada uno desde su dispositivo (y con su propia cámara si quiere). Uno crea la partida y envía la invitación; el otro se une. Set corto a 3 juegos, con revancha.</p>
+      <div class="btn-row" id="onlineControlRow">
+        <button class="opt" data-control="camera">📷 Cámara</button>
+        <button class="opt" data-control="keyboard">⌨️ Teclado / Táctil</button>
+      </div>
       <div id="onlineStatus" class="calib-status">Elige una opción</div>
       <div class="main-buttons">
         <button class="big" id="btnOnlineHost">🎾 Crear partida</button>
+        <button class="big secondary" id="btnOnlineShare" hidden>📨 Enviar invitación</button>
         <div class="btn-row">
           <input id="onlineCode" maxlength="4" placeholder="CÓDIGO" autocomplete="off" />
           <button class="big" id="btnOnlineJoin">Unirse</button>

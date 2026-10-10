@@ -7,6 +7,8 @@ import { Ball } from './game/ball';
 import { PlayerEntity } from './game/player';
 import { analyzeMatch } from './analysis/coach';
 import {
+  DAILY_BONUS_XP,
+  DAILY_GOAL,
   addTrophy,
   addXp,
   clearSessions,
@@ -20,13 +22,22 @@ import {
   suggestDrill,
   summarize,
 } from './analysis/progress';
+import type { SavedSession } from './analysis/progress';
 import { CHALLENGES, ChallengeMode } from './modes/challenges';
-import type { ChallengeId } from './modes/challenges';
+import type { ChallengeDef, ChallengeId } from './modes/challenges';
 import { RIVALS, ROUND_NAMES, TOURNEY_GAMES } from './modes/tournament';
 import { sfx } from './audio/sfx';
-import { OnlineSession, RemoteControl } from './net/online';
+import {
+  INVITE_PARAM,
+  OnlineSession,
+  RemoteControl,
+  cleanName,
+  encodePose,
+  inviteUrl,
+  parseCode,
+} from './net/online';
+import type { PeerInfo } from './net/online';
 import { GuestMatchView } from './net/guest';
-import { CPU_PALETTE } from './game/render';
 import { CameraTrainingView } from './training/view';
 import type { TrainingSummary } from './training/session';
 import type { DrillType, ShotType } from './types';
@@ -34,8 +45,8 @@ import { SHOT_NAMES } from './types';
 import { PoseTracker } from './camera/pose';
 import { CameraControl } from './camera/gestures';
 import { runCalibration } from './camera/calibration';
-import { ui } from './ui/screens';
-import { KeyboardTouchControl, SplitKeyboardControl } from './ui/input';
+import { shareLink, ui } from './ui/screens';
+import { KeyboardTouchControl } from './ui/input';
 import type { ControlAdapter } from './ui/input';
 import { checkAccess } from './access/gate';
 import { initTelemetry, track } from './telemetry';
@@ -57,9 +68,9 @@ const preview = document.querySelector<HTMLCanvasElement>('#camPreview')!;
 // three.js se carga con import() dinámico SOLO cuando se pide ese
 // renderer, así el bundle inicial del canvas (el que recibe todo el
 // mundo por defecto) no crece ni un byte por el spike.
-const rendererParam = new URLSearchParams(location.search).get('renderer');
+const startParams = new URLSearchParams(location.search);
 const renderer: GameRenderer =
-  rendererParam === 'three'
+  startParams.get('renderer') === 'three'
     ? new (await import('./game/renderers/threeRenderer')).ThreeRenderer(canvas)
     : new Renderer(canvas);
 ui.init();
@@ -67,13 +78,13 @@ ui.init();
 let currentMode: MatchMode | PracticeMode | ChallengeMode | null = null;
 let currentTraining: CameraTrainingView | null = null;
 let currentControl: ControlAdapter | null = null;
-let currentOnline: OnlineSession | null = null;
 let currentGuest: GuestMatchView | null = null;
-let lastModeWasMatch = true;
 // Marca la sesión lanzada desde el onboarding, para dar contexto al informe
 // (evita mostrar métricas en 0 sin explicación al recién llegado).
 let firstSessionPending = false;
 let tracker: PoseTracker | null = null;
+/** Qué hace el botón principal del informe ("Jugar otra vez" / "Revancha"). */
+let again: (() => void) | null = null;
 
 // ---- Fondo animado del menú: pista vacía ----
 const idleBall = new Ball();
@@ -109,8 +120,7 @@ function backToMenu(): void {
   currentTraining = null;
   currentGuest?.stop();
   currentGuest = null;
-  currentOnline?.destroy();
-  currentOnline = null;
+  closeOnline();
   currentControl?.destroy();
   currentControl = null;
   tourneyRound = -1;
@@ -120,45 +130,110 @@ function backToMenu(): void {
   startIdle();
 }
 
+// ---- Control: cámara (con calibración) o teclado/táctil ----
+
+/**
+ * Arranca la cámara y el modelo de pose (una sola vez: el tracker se
+ * reutiliza entre partidas). Si falla, espera a que el jugador pulse
+ * "Volver" y devuelve null.
+ */
+async function ensureTracker(status: string, failHint: string): Promise<PoseTracker | null> {
+  ui.show('calib');
+  ui.setCalibCountdown(null);
+  ui.setCalibStatus(status, 'wait');
+  if (!tracker) tracker = new PoseTracker(video);
+  if (tracker.running) return tracker;
+  try {
+    await tracker.start();
+    return tracker;
+  } catch {
+    ui.setCalibStatus(`${tracker.error ?? 'Error de cámara'} — ${failHint}`, 'err');
+    await new Promise<void>((res) => {
+      ui.onCalibCancel = () => res();
+    });
+    ui.onCalibCancel = null;
+    return null;
+  }
+}
+
 async function buildControl(): Promise<ControlAdapter | null> {
   if (ui.settings.control === 'keyboard') {
     return new KeyboardTouchControl();
   }
-  // Cámara: arrancar tracker (si no está ya) y calibrar
-  ui.show('calib');
-  ui.setCalibStatus('Iniciando cámara y modelo de pose…', 'wait');
-  if (!tracker) tracker = new PoseTracker(video);
-  if (!tracker.running) {
-    try {
-      await tracker.start();
-    } catch (e) {
-      ui.setCalibStatus(
-        `${tracker.error ?? 'Error de cámara'} — puedes volver y elegir Teclado.`,
-        'err',
-      );
-      await new Promise<void>((res) => {
-        ui.onCalibCancel = () => res();
-      });
-      ui.onCalibCancel = null;
-      return null;
-    }
-  }
-  const calib = await runCalibration(tracker, preview);
+  const t = await ensureTracker('Iniciando cámara y modelo de pose…', 'puedes volver y elegir Teclado.');
+  if (!t) return null;
+  const calib = await runCalibration(t, preview);
   if (!calib) return null;
-  return new CameraControl(tracker, calib, preview);
+  return new CameraControl(t, calib, preview);
 }
 
-async function startMatch(): Promise<void> {
+/**
+ * Entrada común a los modos de pista: prepara el control y deja la pantalla
+ * lista para jugar. Si el jugador cancela (o falla la cámara) vuelve al menú.
+ */
+async function enterCourt(): Promise<ControlAdapter | null> {
   stopIdle();
   const control = await buildControl();
   if (!control) {
     backToMenu();
-    return;
+    return null;
   }
   currentControl = control;
-  lastModeWasMatch = true;
   ui.show('none');
   ui.setCamPreviewVisible(ui.settings.control === 'camera');
+  return control;
+}
+
+// ---- Cierre de sesión: historial + XP + meta diaria ----
+
+interface ClosedSession {
+  saved: boolean;
+  xp: number; // XP total ganada (incluye el bonus de la meta diaria)
+  leveledUp: boolean;
+  note: string; // línea lista para el informe
+}
+
+/**
+ * Cierra una sesión jugada: la guarda en el historial (alimenta racha y
+ * correcciones), suma la XP y, si es la sesión que completa la meta diaria,
+ * añade el bonus. Todos los modos pasan por aquí.
+ */
+function closeSession(session: Omit<SavedSession, 'date'>, xpBase: number): ClosedSession {
+  const saved = saveSession({ date: Date.now(), ...session });
+  const goalHit = saved && summarize(loadSessions()).sessionsToday === DAILY_GOAL;
+  if (goalHit) track('meta_diaria_cumplida');
+  const xp = Math.max(0, Math.round(xpBase)) + (goalHit ? DAILY_BONUS_XP : 0);
+  const info = addXp(xp);
+  const note = [
+    `+${Math.round(xpBase)} XP`,
+    goalHit ? `🎯 ¡Meta diaria cumplida! +${DAILY_BONUS_XP} XP` : '',
+    info.leveledUp ? '⬆️ ¡subes de nivel!' : '',
+  ]
+    .filter(Boolean)
+    .join(' · ');
+  return { saved, xp, leveledUp: info.leveledUp, note };
+}
+
+function resultTitle(won: boolean, mine: number, theirs: number, name = ''): string {
+  return won
+    ? `🏆 ¡Ganaste ${mine}-${theirs}${name ? `, ${name}` : ''}!`
+    : `Perdiste ${mine}-${theirs}… ¡la próxima cae!`;
+}
+
+/** "Jugar otra vez" de los modos locales: limpia la pantalla y relanza. */
+function againLocal(start: () => Promise<void>): void {
+  again = () => {
+    ui.show('none');
+    void start();
+  };
+  ui.setAgain();
+}
+
+// ---- Partido vs IA ----
+
+async function startMatch(): Promise<void> {
+  const control = await enterCourt();
+  if (!control) return;
 
   track('partido_iniciado', { control: ui.settings.control, dificultad: ui.settings.difficulty });
   const match = new MatchMode({
@@ -168,23 +243,17 @@ async function startMatch(): Promise<void> {
     difficulty: ui.settings.difficulty,
     p1Name: ui.profile.name || undefined,
     onFinish: (logger, score) => {
-      track('informe_visto', { modo: 'partido', ganado: score.winner === 'player' });
+      const won = score.winner === 'player';
+      track('informe_visto', { modo: 'partido', ganado: won });
       const report = analyzeMatch(logger);
-      const title =
-        score.winner === 'player'
-          ? `🏆 ¡Ganaste ${score.games.player}-${score.games.cpu}${ui.profile.name ? `, ${ui.profile.name}` : ''}!`
-          : `Perdiste ${score.games.player}-${score.games.cpu}… ¡la próxima cae!`;
-      const saved = saveSession({
-        date: Date.now(),
-        mode: 'match',
-        title: `Partido ${score.games.player}-${score.games.cpu}`,
-        stats: report.stats,
-        tips: report.tips,
-      });
-      const xpGained = score.winner === 'player' ? 120 : 60;
-      const xp = addXp(xpGained);
+      const { player: p, cpu: c } = score.games;
+      const closed = closeSession(
+        { mode: 'match', title: `Partido ${p}-${c}`, stats: report.stats, tips: report.tips },
+        won ? 120 : 60,
+      );
       ui.setCamPreviewVisible(false);
-      ui.showReport(title, report, saved, `+${xpGained} XP${xp.leveledUp ? ' · ⬆️ ¡subes de nivel!' : ''}`);
+      againLocal(startMatch);
+      ui.showReport(resultTitle(won, p, c, ui.profile.name), report, closed.saved, closed.note);
     },
     onQuit: backToMenu,
   });
@@ -192,17 +261,11 @@ async function startMatch(): Promise<void> {
   match.start();
 }
 
+// ---- Práctica libre ----
+
 async function startPractice(): Promise<void> {
-  stopIdle();
-  const control = await buildControl();
-  if (!control) {
-    backToMenu();
-    return;
-  }
-  currentControl = control;
-  lastModeWasMatch = false;
-  ui.show('none');
-  ui.setCamPreviewVisible(ui.settings.control === 'camera');
+  const control = await enterCourt();
+  if (!control) return;
 
   track('practica_iniciada', { control: ui.settings.control, drill: ui.settings.drill });
   const practice = new PracticeMode({
@@ -214,18 +277,15 @@ async function startPractice(): Promise<void> {
       const drill = ui.settings.drill;
       const drillName =
         drill === 'mixto' ? 'golpes variados' : drill === 'volley' ? 'voleas' : SHOT_NAMES[drill];
-      const saved = saveSession({
-        date: Date.now(),
-        mode: 'practice',
-        title: `Práctica de ${drillName}`,
-        stats: report.stats,
-        tips: report.tips,
-      });
-      const xpP = addXp(40);
+      const closed = closeSession(
+        { mode: 'practice', title: `Práctica de ${drillName}`, stats: report.stats, tips: report.tips },
+        40,
+      );
       ui.setCamPreviewVisible(false);
       ui.setFirstSessionBanner(firstSessionPending);
       firstSessionPending = false;
-      ui.showReport('🎯 Informe de práctica', report, saved, `+40 XP${xpP.leveledUp ? ' · ⬆️ ¡subes de nivel!' : ''}`);
+      againLocal(startPractice);
+      ui.showReport('🎯 Informe de práctica', report, closed.saved, closed.note);
     },
   });
   currentMode = practice;
@@ -235,13 +295,8 @@ async function startPractice(): Promise<void> {
 // ---- Torneo: tres rondas contra rivales con personalidad ----
 
 async function startTournament(): Promise<void> {
-  stopIdle();
-  const control = await buildControl();
-  if (!control) {
-    backToMenu();
-    return;
-  }
-  currentControl = control;
+  const control = await enterCourt();
+  if (!control) return;
   tourneyRound = 0;
   ui.setCamPreviewVisible(false);
   ui.showTourney(0, 'play');
@@ -263,17 +318,19 @@ function playTourneyRound(): void {
     targetGames: TOURNEY_GAMES,
     rival,
     onFinish: (logger, score) => {
+      const won = score.winner === 'player';
       const report = analyzeMatch(logger);
-      saveSession({
-        date: Date.now(),
-        mode: 'match',
-        title: `Torneo · ${ROUND_NAMES[round]} vs ${rival.name} ${score.games.player}-${score.games.cpu}`,
-        stats: report.stats,
-        tips: report.tips,
-      });
-      addXp(score.winner === 'player' ? 100 : 50);
+      closeSession(
+        {
+          mode: 'match',
+          title: `Torneo · ${ROUND_NAMES[round]} vs ${rival.name} ${score.games.player}-${score.games.cpu}`,
+          stats: report.stats,
+          tips: report.tips,
+        },
+        won ? 100 : 50,
+      );
       ui.setCamPreviewVisible(false);
-      if (score.winner !== 'player') {
+      if (!won) {
         ui.showTourney(round, 'lost');
       } else if (round === RIVALS.length - 1) {
         const trophies = addTrophy();
@@ -294,61 +351,109 @@ function playTourneyRound(): void {
 
 // ---- Online 1v1: el anfitrión simula, el invitado renderiza en espejo ----
 
+/** Conexión viva con un rival: dura varias partidas para poder pedir revancha. */
+interface OnlineLink {
+  session: OnlineSession;
+  iWant: boolean; // he pedido revancha
+  rivalWants: boolean; // el rival ha pedido revancha
+}
+let online: OnlineLink | null = null;
+
+function myInfo(fallbackName: string): PeerInfo {
+  return { name: ui.profile.name || fallbackName, pal: profilePalette(ui.profile) };
+}
+
+function closeOnline(): void {
+  online?.session.destroy();
+  online = null;
+  again = null;
+  ui.setAgain();
+  ui.setOnlineInvite(false);
+}
+
 function onlineDropped(): void {
   backToMenu();
   ui.setOnlineStatus('❌ Se perdió la conexión con el rival', 'err');
   ui.show('online');
 }
 
-async function hostOnline(): Promise<void> {
+/** Prepara el control y vuelve a la pantalla online (con la pista de fondo). */
+async function prepareOnline(): Promise<boolean> {
   stopIdle();
   const control = await buildControl();
   ui.show('online');
   startIdle();
   if (!control) {
     ui.setOnlineStatus('No se pudo iniciar el control', 'err');
-    return;
+    return false;
   }
   currentControl = control;
   ui.setCamPreviewVisible(false);
+  closeOnline();
+  return true;
+}
+
+async function hostOnline(): Promise<void> {
+  if (!(await prepareOnline())) return;
   ui.setOnlineStatus('Creando sala…', 'wait');
-  currentOnline?.destroy();
   const session = OnlineSession.host(
-    (code) => ui.setOnlineStatus(`Código: ${code} — compártelo con tu rival y no cierres esta pantalla`, 'ok'),
+    myInfo('Anfitrión'),
+    (code) => {
+      ui.setOnlineStatus(`Sala ${code} lista: envía la invitación a tu rival y no cierres esta pantalla`, 'ok');
+      ui.setOnlineInvite(true);
+    },
     () => startOnlineMatch(session),
     (err) => ui.setOnlineStatus(err, 'err'),
   );
-  currentOnline = session;
+  online = { session, iWant: false, rivalWants: false };
+}
+
+async function joinOnline(rawCode: string): Promise<void> {
+  const code = parseCode(rawCode);
+  if (!code) {
+    ui.setOnlineStatus('Ese código no es válido: son 4 letras o números', 'err');
+    return;
+  }
+  if (!(await prepareOnline())) return;
+  ui.setOnlineStatus(`Conectando a ${code}…`, 'wait');
+  const session = OnlineSession.join(
+    code,
+    myInfo('Invitado'),
+    () => startGuestView(session),
+    (err) => ui.setOnlineStatus(err, 'err'),
+  );
+  online = { session, iWant: false, rivalWants: false };
+}
+
+async function shareInvite(): Promise<void> {
+  if (!online) return;
+  const code = online.session.code;
+  track('invitacion_enviada');
+  const outcome = await shareLink(`🎾 Te reto a un partido en Pádel Cam (sala ${code}).`, inviteUrl(code));
+  if (outcome === 'copied') {
+    ui.setOnlineStatus(`Enlace copiado: pégaselo a tu rival · Sala ${code}`, 'ok');
+  } else if (outcome === 'failed') {
+    ui.setOnlineStatus(`No se pudo compartir: díctale el código ${code}`, 'ok');
+  }
 }
 
 function startOnlineMatch(session: OnlineSession): void {
-  if (!currentControl) return;
+  const rival = session.rival;
+  if (!currentControl || !rival) return;
   stopIdle();
   ui.show('none');
+  ui.setOnlineInvite(false);
   ui.setCamPreviewVisible(ui.settings.control === 'camera');
-  lastModeWasMatch = true;
+  track('online_iniciado', { rol: 'anfitrion' });
 
   const remote = new RemoteControl();
   session.onMessage = (m) => {
     if (m.t === 'in') remote.feed(m);
   };
-  session.onClose = () => {
-    onlineDropped();
-  };
+  session.onClose = onlineDropped;
 
-  // Interceptar los toasts para retransmitirlos al invitado
-  let toastN = 0;
-  let lastToast = '';
-  const origToast = ui.toast.bind(ui);
-  ui.toast = (text: string, ms?: number) => {
-    toastN++;
-    lastToast = text;
-    origToast(text, ms);
-  };
-  const scoreGamesEl = document.querySelector('#scoreGames')!;
-  const scorePointsEl = document.querySelector('#scorePoints')!;
-  const serveInfoEl = document.querySelector('#serveInfo')!;
-
+  let seq = 0;
+  let broadcast = 0;
   const match = new MatchMode({
     renderer,
     control: currentControl,
@@ -357,117 +462,88 @@ function startOnlineMatch(session: OnlineSession): void {
     targetGames: 3,
     controlP2: remote,
     p1Name: ui.profile.name || 'Anfitrión',
-    rival: { name: 'Invitado', tagline: '', palette: CPU_PALETTE, difficulty: 'medium' },
+    rival: { name: rival.name, tagline: '', palette: rival.pal, difficulty: 'medium' },
     onFinish: (logger, score) => {
-      cleanup();
-      const p = score.games.player;
-      const c = score.games.cpu;
-      session.send({
-        t: 'end',
-        title: score.winner === 'cpu' ? `🏆 ¡Ganaste ${c}-${p}!` : `Perdiste ${c}-${p}… ¡la próxima cae!`,
-        games: `${c} - ${p}`,
-      });
-      window.setTimeout(() => session.destroy(), 400);
-      currentOnline = null;
+      window.clearInterval(broadcast);
+      currentMode = null;
+      const { player: p, cpu: c } = score.games;
+      const won = score.winner === 'player';
+      session.send({ t: 'end', games: [p, c] });
       const report = analyzeMatch(logger);
-      const saved = saveSession({
-        date: Date.now(),
-        mode: 'match',
-        title: `Online vs Invitado ${p}-${c}`,
-        stats: report.stats,
-        tips: report.tips,
-      });
-      const xpGained = score.winner === 'player' ? 150 : 60;
-      const xpO = addXp(xpGained);
-      ui.setCamPreviewVisible(false);
-      ui.showReport(
-        score.winner === 'player' ? `🏆 ¡Ganaste ${p}-${c}!` : `Perdiste ${p}-${c}… ¡la próxima cae!`,
-        report,
-        saved,
-        `+${xpGained} XP${xpO.leveledUp ? ' · ⬆️ ¡subes de nivel!' : ''}`,
+      const closed = closeSession(
+        { mode: 'match', title: `Online vs ${rival.name} ${p}-${c}`, stats: report.stats, tips: report.tips },
+        won ? 150 : 60,
       );
+      ui.setCamPreviewVisible(false);
+      ui.showReport(resultTitle(won, p, c), report, closed.saved, closed.note);
+      awaitRematch(session);
     },
     onQuit: () => {
-      cleanup();
+      window.clearInterval(broadcast);
       backToMenu();
     },
   });
 
-  const broadcast = window.setInterval(() => {
+  broadcast = window.setInterval(() => {
     if (!session.connected) return;
     const st = match.netState();
     session.send({
       t: 'st',
+      n: seq++,
       b: st.b,
       p: st.p,
       c: st.c,
-      hud: {
-        games: scoreGamesEl.textContent ?? '',
-        points: scorePointsEl.textContent ?? '',
-        serve: serveInfoEl.textContent ?? '',
-        toast: lastToast,
-        toastN,
-        replay: st.replay,
-      },
+      sc: st.sc,
+      serve: st.serve,
+      toast: st.toast,
+      toastN: st.toastN,
+      replay: st.replay,
+      hp: encodePose(st.pose),
     });
   }, 40);
-
-  function cleanup(): void {
-    window.clearInterval(broadcast);
-    ui.toast = origToast;
-  }
 
   currentMode = match;
   match.start();
 }
 
-async function joinOnline(code: string): Promise<void> {
-  stopIdle();
-  const control = await buildControl();
-  ui.show('online');
-  startIdle();
-  if (!control) {
-    ui.setOnlineStatus('No se pudo iniciar el control', 'err');
-    return;
-  }
-  currentControl = control;
-  ui.setCamPreviewVisible(false);
-  ui.setOnlineStatus(`Conectando a ${code.toUpperCase()}…`, 'wait');
-  currentOnline?.destroy();
-  const session = OnlineSession.join(
-    code,
-    () => startGuestView(session),
-    (err) => ui.setOnlineStatus(err, 'err'),
-  );
-  currentOnline = session;
-}
-
 function startGuestView(session: OnlineSession): void {
-  if (!currentControl) return;
+  const rival = session.rival;
+  if (!currentControl || !rival) return;
   stopIdle();
   ui.show('none');
   ui.setCamPreviewVisible(ui.settings.control === 'camera');
+  track('online_iniciado', { rol: 'invitado' });
 
   const guest = new GuestMatchView({
     renderer,
     control: currentControl,
     session,
-    onEnd: (title, games) => {
-      session.destroy();
-      currentOnline = null;
+    myName: ui.profile.name || 'Invitado',
+    rivalName: rival.name,
+    rivalPalette: rival.pal,
+    onEnd: (mine, theirs) => {
       currentGuest = null;
       ui.setCamPreviewVisible(false);
+      const won = mine > theirs;
+      const stats = [{ lbl: 'Resultado (tú - rival)', val: `${mine} - ${theirs}` }];
+      // El invitado también suma: sesión para la racha y XP como el anfitrión
+      const closed = closeSession(
+        { mode: 'match', title: `Online vs ${rival.name} ${mine}-${theirs}`, stats, tips: [] },
+        won ? 150 : 60,
+      );
       ui.showReport(
-        title,
+        resultTitle(won, mine, theirs),
         {
-          stats: [{ lbl: 'Resultado (tú - rival)', val: games }],
+          stats,
           tips: [{
             warn: false,
-            text: 'En esta versión el informe del entrenador lo recibe quien crea la partida. Juega un partido vs CPU o una práctica para recibir el tuyo.',
+            text: 'El informe técnico completo lo calcula quien crea la sala. Crea tú la próxima (o juega un partido vs IA) para recibir el tuyo.',
           }],
         },
-        false,
+        closed.saved,
+        closed.note,
       );
+      awaitRematch(session);
     },
     onDrop: onlineDropped,
   });
@@ -475,23 +551,101 @@ function startGuestView(session: OnlineSession): void {
   guest.start();
 }
 
-// ---- Desafíos jugables ----
+/**
+ * Tras un partido online la conexión sigue abierta: cualquiera puede pedir
+ * revancha desde el informe y, cuando los dos quieren, el anfitrión la
+ * arranca. Salir del informe (menú, progreso) cierra la conexión.
+ */
+function awaitRematch(session: OnlineSession): void {
+  const link = online;
+  if (!link || link.session !== session) return;
+  link.iWant = false;
+  link.rivalWants = false;
+  const rivalName = session.rival?.name ?? 'tu rival';
 
+  const refresh = (): void => {
+    if (link.iWant) ui.setAgain(`⏳ Esperando a ${rivalName}…`, false);
+    else if (link.rivalWants) ui.setAgain(`🔁 ${rivalName} quiere revancha: ¡aceptar!`);
+    else ui.setAgain('🔁 Revancha');
+  };
+  const start = (): void => {
+    again = null;
+    ui.setAgain();
+    track('revancha_online');
+    if (session.role === 'host') {
+      session.send({ t: 'go' });
+      startOnlineMatch(session);
+    } else {
+      startGuestView(session);
+    }
+  };
+
+  session.onMessage = (m) => {
+    if (m.t === 're') {
+      link.rivalWants = true;
+      if (session.role === 'host' && link.iWant) start();
+      else refresh();
+    } else if (m.t === 'go' && session.role === 'guest' && link.iWant) {
+      start();
+    }
+  };
+  session.onClose = () => {
+    closeOnline();
+    ui.setAgain(`${rivalName} se ha ido`, false);
+  };
+  again = () => {
+    link.iWant = true;
+    session.send({ t: 're' });
+    if (session.role === 'host' && link.rivalWants) start();
+    else refresh();
+  };
+  refresh();
+}
+
+// ---- Desafíos jugables (y retos entre amigos por enlace) ----
+
+/** Reto recibido por enlace: "supera mis N puntos en este desafío". */
+interface Duel {
+  def: ChallengeDef;
+  pts: number;
+  by: string;
+}
+
+const DUEL_PARAM = 'reto';
+
+function parseDuel(params: URLSearchParams): Duel | null {
+  const def = CHALLENGES.find((c) => c.id === params.get(DUEL_PARAM));
+  const pts = Number(params.get('pts'));
+  if (!def || !Number.isInteger(pts) || pts <= 0 || pts > 1_000_000) return null;
+  return { def, pts, by: cleanName(params.get('de'), 'Un amigo') };
+}
+
+function duelUrl(def: ChallengeDef, pts: number, by: string): string {
+  const url = new URL(location.href);
+  url.search = '';
+  url.hash = '';
+  url.searchParams.set(DUEL_PARAM, def.id);
+  url.searchParams.set('pts', String(pts));
+  if (by) url.searchParams.set('de', by);
+  return url.toString();
+}
+
+let duel: Duel | null = parseDuel(startParams);
 let lastChallengeId: ChallengeId = 'diana';
+
+function showChallenges(): void {
+  const banner = duel
+    ? `⚔️ ${duel.by} te reta en ${duel.def.name}: supera sus ${duel.pts} ${duel.def.unit}`
+    : '';
+  ui.showChallenges(CHALLENGES, loadChallengeRecords(), banner);
+}
 
 async function startChallenge(id: ChallengeId): Promise<void> {
   const def = CHALLENGES.find((c) => c.id === id);
   if (!def) return;
   lastChallengeId = id;
-  stopIdle();
-  const control = await buildControl();
-  if (!control) {
-    backToMenu();
-    return;
-  }
-  currentControl = control;
-  ui.show('none');
-  ui.setCamPreviewVisible(ui.settings.control === 'camera');
+  const control = await enterCourt();
+  if (!control) return;
 
   const challenge = new ChallengeMode({
     renderer,
@@ -501,25 +655,55 @@ async function startChallenge(id: ChallengeId): Promise<void> {
     onFinish: (result) => {
       currentMode = null;
       const { record, isNewBest } = saveChallengeResult(def.id, result.score, result.stars);
-      const xpGained = Math.max(5, Math.round(result.score * def.xpMul));
-      const xp = addXp(xpGained);
-      if (xp.leveledUp) sfx.cheer(true);
-      saveSession({
-        date: Date.now(),
-        mode: 'practice',
-        title: `Desafío ${def.name}: ${result.score} ${def.unit}`,
-        stats: [
-          { lbl: 'Puntuación', val: `${result.score} ${def.unit}` },
-          { lbl: 'Estrellas', val: '★'.repeat(result.stars) || '—' },
-        ],
-        tips: [],
-      });
+      const closed = closeSession(
+        {
+          mode: 'practice',
+          title: `Desafío ${def.name}: ${result.score} ${def.unit}`,
+          stats: [
+            { lbl: 'Puntuación', val: `${result.score} ${def.unit}` },
+            { lbl: 'Estrellas', val: '★'.repeat(result.stars) || '—' },
+          ],
+          tips: [],
+        },
+        Math.max(5, Math.round(result.score * def.xpMul)),
+      );
+      if (closed.leveledUp) sfx.cheer(true);
+
+      // Reto de un amigo: ¿lo ha superado?
+      let outcome: { text: string; won: boolean } | null = null;
+      if (duel && duel.def.id === def.id) {
+        const won = result.score > duel.pts;
+        outcome = {
+          won,
+          text: won
+            ? `🏆 ¡Superaste a ${duel.by}! ${result.score} contra ${duel.pts} ${def.unit}. Devuélvele el reto.`
+            : `⚔️ ${duel.by} sigue por delante con ${duel.pts} ${def.unit}: te faltaron ${duel.pts - result.score + 1}.`,
+        };
+        if (won) {
+          track('reto_superado', { desafio: def.id });
+          duel = null;
+        }
+      }
       ui.setCamPreviewVisible(false);
-      ui.showChallengeEnd(result, record, isNewBest, xpGained, xp.leveledUp);
+      ui.showChallengeEnd(result, record, isNewBest, closed.xp, closed.leveledUp, outcome);
     },
   });
   currentMode = challenge;
   challenge.start();
+}
+
+async function shareChallenge(): Promise<void> {
+  const def = CHALLENGES.find((c) => c.id === lastChallengeId);
+  const record = def ? loadChallengeRecords()[def.id] : undefined;
+  if (!def || !record) return;
+  track('reto_enviado', { desafio: def.id });
+  const who = ui.profile.name ? `${ui.profile.name} te reta` : 'Te reto';
+  const outcome = await shareLink(
+    `⚔️ ${who} en Pádel Cam: supera mis ${record.best} ${def.unit} en ${def.name}.`,
+    duelUrl(def, record.best, ui.profile.name),
+  );
+  if (outcome === 'copied') ui.flashButton('#btnChallengeShare', '✅ Enlace copiado: pégaselo');
+  else if (outcome === 'failed') ui.flashButton('#btnChallengeShare', 'No se pudo copiar el enlace');
 }
 
 // ---- Entrenamiento técnico con cámara ----
@@ -538,21 +722,10 @@ function drillToShots(d: DrillType): { shots: ShotType[]; label: string } {
 
 async function startTraining(): Promise<void> {
   stopIdle();
-  ui.show('calib');
-  ui.setCalibStatus('Iniciando cámara y análisis de pose…', 'wait');
-  if (!tracker) tracker = new PoseTracker(video);
-  if (!tracker.running) {
-    try {
-      await tracker.start();
-    } catch {
-      ui.setCalibStatus(`${tracker.error ?? 'Error de cámara'} — vuelve al menú.`, 'err');
-      await new Promise<void>((res) => {
-        ui.onCalibCancel = () => res();
-      });
-      ui.onCalibCancel = null;
-      backToMenu();
-      return;
-    }
+  const t = await ensureTracker('Iniciando cámara y análisis de pose…', 'vuelve al menú.');
+  if (!t) {
+    backToMenu();
+    return;
   }
   ui.show('none');
   const { shots, label } = drillToShots(ui.settings.drill);
@@ -560,35 +733,36 @@ async function startTraining(): Promise<void> {
 
   const view = new CameraTrainingView({
     canvas: trainCanvas,
-    tracker,
+    tracker: t,
     shots,
     label,
     onFinish: (summary: TrainingSummary) => {
       currentTraining = null;
       const timingTxt =
         summary.meanDtMs === null ? '—' : `${summary.meanDtMs > 0 ? '+' : ''}${summary.meanDtMs} ms`;
-      saveSession({
-        date: Date.now(),
-        mode: 'practice',
-        title: `Técnica · ${label}`,
-        stats: [
-          { lbl: 'Consistencia', val: `${summary.consistency}%` },
-          { lbl: 'Correctos', val: `${summary.correct} / ${summary.reps.length}` },
-          { lbl: 'Timing medio', val: timingTxt },
-          { lbl: 'Mejor racha', val: `${summary.bestStreak}` },
-        ],
-        tips: [
-          ...(summary.mainIssue
-            ? [{ id: summary.mainIssue.tipId, warn: true, text: summary.mainIssue.text }]
-            : []),
-          { warn: false, text: summary.recommendation },
-        ],
-      });
-      const xpT = addXp(summary.consistency);
-      if (xpT.leveledUp) sfx.cheer(true);
+      const closed = closeSession(
+        {
+          mode: 'practice',
+          title: `Técnica · ${label}`,
+          stats: [
+            { lbl: 'Consistencia', val: `${summary.consistency}%` },
+            { lbl: 'Correctos', val: `${summary.correct} / ${summary.reps.length}` },
+            { lbl: 'Timing medio', val: timingTxt },
+            { lbl: 'Mejor racha', val: `${summary.bestStreak}` },
+          ],
+          tips: [
+            ...(summary.mainIssue
+              ? [{ id: summary.mainIssue.tipId, warn: true, text: summary.mainIssue.text }]
+              : []),
+            { warn: false, text: summary.recommendation },
+          ],
+        },
+        summary.consistency,
+      );
+      if (closed.leveledUp) sfx.cheer(true);
       ui.setFirstSessionBanner(firstSessionPending);
       firstSessionPending = false;
-      ui.showTrainingSummary(summary, summary.consistency);
+      ui.showTrainingSummary(summary, closed.xp);
     },
     onQuit: () => {
       currentTraining = null;
@@ -599,7 +773,10 @@ async function startTraining(): Promise<void> {
   view.start();
 }
 
+// ---- Progreso y tarjeta del coach ----
+
 function showProgress(): void {
+  closeOnline(); // salir del informe de un partido online suelta al rival
   const sessions = loadSessions();
   ui.showProgress(sessions, pendingCorrections(sessions), loadTrophies());
 }
@@ -621,29 +798,30 @@ ui.onClearProgress = () => {
     showProgress();
   }
 };
-ui.onMenuShown = refreshCoachCard;
+ui.onMenuShown = () => {
+  closeOnline(); // volver al menú desde el informe online también suelta al rival
+  refreshCoachCard();
+};
 ui.onStartTournament = () => void startTournament();
 ui.onTourneyGo = playTourneyRound;
 ui.onTourneyQuit = backToMenu;
 ui.onOnlineHost = () => void hostOnline();
 ui.onOnlineJoin = (code) => void joinOnline(code);
 ui.onOnlineBack = backToMenu;
+ui.onOnlineShare = () => void shareInvite();
 ui.onStartTraining = () => void startTraining();
 ui.onTrainAgain = () => void startTraining();
-ui.onShowChallenges = () => ui.showChallenges(CHALLENGES, loadChallengeRecords());
+ui.onShowChallenges = showChallenges;
 ui.onPlayChallenge = (id) => void startChallenge(id as ChallengeId);
 ui.onChallengeAgain = () => void startChallenge(lastChallengeId);
+ui.onChallengeShare = () => void shareChallenge();
 ui.onCoachTrain = () => {
   if (!lastSuggestion) return;
   ui.selectDrill(lastSuggestion.drill);
   void startPractice();
 };
 refreshCoachCard();
-ui.onAgain = () => {
-  ui.show('none');
-  if (lastModeWasMatch) void startMatch();
-  else void startPractice();
-};
+ui.onAgain = () => again?.();
 
 // "Empezar sesión" en la pantalla de primera sesión lanza una sesión
 // enfocada en el golpe elegido, que termina en informe (el onboarding de
@@ -657,6 +835,17 @@ ui.onWelcomeDone = () => {
   else void startPractice();
 };
 
+// Enlaces compartidos: ?sala=CÓDIGO (invitación a un partido online) y
+// ?reto=… (reto de un amigo en un desafío). Se leen una vez y se quitan de
+// la barra de direcciones para que recargar no los repita.
+const inviteCode = parseCode(startParams.get(INVITE_PARAM));
+if (startParams.has(INVITE_PARAM) || startParams.has(DUEL_PARAM)) {
+  const rest = new URLSearchParams(startParams);
+  for (const k of [INVITE_PARAM, DUEL_PARAM, 'pts', 'de']) rest.delete(k);
+  const qs = rest.toString();
+  history.replaceState(null, '', location.pathname + (qs ? `?${qs}` : ''));
+}
+
 // Tope de accesos gratuitos (mientras se define el cobro): se resuelve antes
 // de soltar al jugador en cualquier pantalla. Sin backend configurado no
 // bloquea a nadie (ver src/access/gate.ts).
@@ -666,9 +855,16 @@ checkAccess().then((access) => {
     return;
   }
   startIdle();
-  // Primera visita: en vez de soltar al recién llegado en un menú con 7 modos,
-  // se le da una bienvenida breve que lo lleva a su primer partido.
-  if (ui.isFirstVisit) {
+  if (inviteCode) {
+    // Quien llega invitado va directo a unirse: la bienvenida puede esperar
+    track('invitacion_abierta');
+    ui.showOnlineJoin(inviteCode);
+  } else if (duel) {
+    track('reto_abierto', { desafio: duel.def.id });
+    showChallenges();
+  } else if (ui.isFirstVisit) {
+    // Primera visita: en vez de soltar al recién llegado en un menú con 7 modos,
+    // se le da una bienvenida breve que lo lleva a su primer partido.
     track('bienvenida_vista');
     ui.showWelcome();
   }

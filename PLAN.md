@@ -1,7 +1,8 @@
 # Pádel Cam — Plan técnico y hoja de ruta
 
 *Documento de traspaso para agentes/modelos que continúen el desarrollo.
-Última actualización: julio 2026, rama `claude/game-immersion-features-kyqihy`.
+Última actualización: octubre 2026, rama `master` (la rama
+`claude/game-immersion-features-kyqihy` se fusionó en agosto).
 Contexto de producto: ver `PRODUCT.md`. Contexto de usuario: ver `README.md`.*
 
 ---
@@ -31,6 +32,33 @@ Contexto de producto: ver `PRODUCT.md`. Contexto de usuario: ver `README.md`.*
   "frente falso"), pala en alto en espera, brazos visibles a los costados,
   anillos de identidad bajo los jugadores (referencia Premier Padel),
   repetición a cámara lenta saltable con cualquier tecla.
+
+### Añadido en octubre 2026 (verificado con Playwright, sin cámara real)
+- **Pose en vivo**: con cámara, los brazos del avatar siguen a los brazos
+  reales del jugador (`LivePose` en `src/ui/input.ts`, lo produce
+  `CameraControl.getPose()`, lo pinta `drawAvatar` en `render.ts`). Es SOLO
+  visual: el gameplay sigue usando `MoveIntent` + `SwingEvent`. De espaldas,
+  una mano delante del pecho cede a la pose propia del avatar (peso `w` en
+  `liveMix`) para no romper la regla de legibilidad. Three.js NO lo usa.
+- **Online v2** (`src/net/online.ts`, `ID_PREFIX` v2, incompatible con v1):
+  saludo con nombre y equipación, marcador desde el lado de cada uno,
+  invitación por enlace (`?sala=CÓDIGO`) con compartir nativo/portapapeles,
+  revancha sin volver a compartir código, pose en vivo y forma técnica del
+  golpe por la red, y el invitado ya guarda sesión y XP. El invitado
+  interpola entre estados (25 Hz → 60 fps). PeerJS se carga con import()
+  dinámico (bundle inicial 103 → 79 KB gzip).
+- **Reto por enlace** (`?reto=diana&pts=N&de=Nombre`): duelo asíncrono sin
+  backend sobre los desafíos; el botón está en el resultado del desafío.
+- **Meta diaria**: 3 sesiones al día dan +60 XP (`DAILY_GOAL` en
+  `progress.ts`); todas las sesiones cierran por `closeSession()` en main.ts.
+- **Refactor**: detección de swing única en `src/camera/swing.ts`
+  (`SwingDetector`, antes duplicada en gestures.ts y session.ts); arranque de
+  modos unificado en `enterCourt()`/`ensureTracker()`; el HUD del online ya
+  no raspa el DOM (`MatchMode.netState()` lleva marcador/saque/toast).
+- **AVISO**: el proyecto Supabase de `src/cloud.ts` no resuelve por DNS
+  (pausado o borrado por inactividad del plan gratuito). Mientras siga así,
+  "Guardar en la nube" falla y el tope de accesos (`src/access/gate.ts`)
+  queda abierto. Hay que restaurarlo o crear otro y actualizar las claves.
 
 ### Spike Three.js (experimental, NO es candidato a producción todavía)
 - `src/game/renderers/threeRenderer.ts`, activable con `?renderer=three`,
@@ -161,15 +189,18 @@ src/
       GameRenderer.ts   Contrato común (draw/shake/burst/palettes)
       threeRenderer.ts  Spike WebGL (experimental)
   camera/
-    pose.ts          PoseTracker (MediaPipe, CDN en runtime)
-    gestures.ts      Gesto→golpe (velocidad de muñeca en anchos de cuerpo)
+    pose.ts          PoseTracker (MediaPipe, CDN en runtime) + wake lock
+    swing.ts         SwingDetector: detección de golpe, compartida por todos
+    gestures.ts      CameraControl: caderas→posición, golpes y pose en vivo
     calibration.ts   Calibración con cuenta atrás y arranque automático
   training/
     session.ts       Máquina de fases por repetición (pool de golpes, bolsa)
     metrics.ts       Postura/zona de impacto/preparación desde la pose
     view.ts          Cámara fullscreen + esqueleto por colores + bola entrante
   modes/             practice.ts, challenges.ts, tournament.ts
-  net/               online.ts (PeerJS host), guest.ts (vista del invitado)
+  net/               online.ts (protocolo, sesión, invitación), guest.ts (invitado)
+  access/gate.ts     Tope de accesos gratuitos (Supabase, abre si falla)
+  cloud.ts           Cuentas y sincronización (Supabase)
   analysis/          logger.ts, coach.ts (informes), progress.ts (XP/sesiones)
   ui/                screens.ts (todas las pantallas DOM), input.ts (teclado/táctil)
   audio/sfx.ts       Sonido 100% WebAudio sintetizado

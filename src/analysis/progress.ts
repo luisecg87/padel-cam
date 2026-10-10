@@ -202,15 +202,22 @@ export function saveChallengeResult(
 
 // ---------- Racha y plan del día (bucle de retención) ----------
 
+/** Meta diaria: sesiones al día que dan el bonus (un objetivo corto y cerrable). */
+export const DAILY_GOAL = 3;
+export const DAILY_BONUS_XP = 60;
+
 export interface ProgressSummary {
   totalSessions: number;
   streakDays: number; // días consecutivos entrenados (sigue viva si entrenaste ayer)
   trainedToday: boolean;
+  sessionsToday: number;
 }
 
 export function summarize(sessions: SavedSession[]): ProgressSummary {
   const days = new Set(sessions.map((s) => new Date(s.date).toDateString()));
   const d = new Date();
+  const today = d.toDateString();
+  const sessionsToday = sessions.filter((s) => new Date(s.date).toDateString() === today).length;
   const trainedToday = days.has(d.toDateString());
   if (!trainedToday) d.setDate(d.getDate() - 1);
   let streakDays = 0;
@@ -218,7 +225,7 @@ export function summarize(sessions: SavedSession[]): ProgressSummary {
     streakDays++;
     d.setDate(d.getDate() - 1);
   }
-  return { totalSessions: sessions.length, streakDays, trainedToday };
+  return { totalSessions: sessions.length, streakDays, trainedToday, sessionsToday };
 }
 
 export interface DrillSuggestion {

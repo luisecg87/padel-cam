@@ -1,6 +1,7 @@
 import { sfx } from '../audio/sfx';
 import { RIVALS, ROUND_NAMES, TOURNEY_GAMES } from '../modes/tournament';
 import type { Report } from '../analysis/coach';
+import { DAILY_BONUS_XP, DAILY_GOAL } from '../analysis/progress';
 import type { ChallengeRecord, Correction, DrillSuggestion, ProgressSummary, SavedSession, XpInfo } from '../analysis/progress';
 import type { ChallengeDef, ChallengeResult } from '../modes/challenges';
 import type { TrainingSummary } from '../training/session';
@@ -33,6 +34,36 @@ const WELCOME_SEEN_KEY = 'padelcam_seen_welcome_v1';
 
 export type TourneyPhase = 'play' | 'lost' | 'champion';
 
+/** Texto ajeno (nombres de rivales, títulos guardados) seguro para innerHTML. */
+const ESCAPES: Record<string, string> = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
+const esc = (text: string): string => text.replace(/[&<>"']/g, (ch) => ESCAPES[ch] ?? ch);
+
+export type ShareOutcome = 'shared' | 'copied' | 'failed';
+
+/**
+ * Comparte un enlace con la hoja nativa del sistema (móvil) o, si no la
+ * hay, lo copia al portapapeles. Cancelar la hoja nativa no es un error.
+ */
+export async function shareLink(text: string, url: string): Promise<ShareOutcome> {
+  if (typeof navigator.share === 'function') {
+    try {
+      await navigator.share({ title: 'Pádel Cam', text, url });
+      return 'shared';
+    } catch (e) {
+      if (e instanceof DOMException && e.name === 'AbortError') return 'shared';
+      // Sin hoja de compartir utilizable: se intenta el portapapeles
+    }
+  }
+  try {
+    await navigator.clipboard.writeText(`${text} ${url}`);
+    return 'copied';
+  } catch {
+    return 'failed';
+  }
+}
+
+const AGAIN_LABEL = 'Jugar otra vez';
+
 const $ = <T extends HTMLElement = HTMLElement>(sel: string): T => {
   const el = document.querySelector<T>(sel);
   if (!el) throw new Error(`No existe el elemento ${sel}`);
@@ -61,6 +92,8 @@ class UI {
   onOnlineHost: (() => void) | null = null;
   onOnlineJoin: ((code: string) => void) | null = null;
   onOnlineBack: (() => void) | null = null;
+  onOnlineShare: (() => void) | null = null;
+  onChallengeShare: (() => void) | null = null;
   onStartTraining: (() => void) | null = null;
   onTrainAgain: (() => void) | null = null;
   onShowChallenges: (() => void) | null = null;
@@ -115,6 +148,14 @@ class UI {
       else this.setOnlineStatus('Escribe el código de 4 letras de la partida', 'err');
     });
     $('#btnOnlineBack').addEventListener('click', () => this.onOnlineBack?.());
+    $('#btnOnlineShare').addEventListener('click', () => this.onOnlineShare?.());
+    $('#btnChallengeShare').addEventListener('click', () => this.onChallengeShare?.());
+    // El invitado por enlace llega directo a esta pantalla: tiene que poder
+    // elegir cámara o teclado aquí, sin pasar por el menú.
+    $('#onlineControlRow')
+      .querySelectorAll<HTMLButtonElement>('.opt')
+      .forEach((b) => b.addEventListener('click', () =>
+        this.selectControl(b.dataset.control === 'keyboard' ? 'keyboard' : 'camera')));
     $('#btnTraining').addEventListener('click', () => this.onStartTraining?.());
     $('#btnTrainAgain').addEventListener('click', () => this.onTrainAgain?.());
     $('#btnTrainMenu').addEventListener('click', () => this.show('menu'));
@@ -167,8 +208,8 @@ class UI {
   /** Fija el control (cámara/teclado), lo refleja en el menú y lo recuerda. */
   selectControl(control: ControlMode): void {
     this.settings.control = control;
-    $('#controlRow')
-      .querySelectorAll<HTMLButtonElement>('.opt')
+    document
+      .querySelectorAll<HTMLButtonElement>('#controlRow .opt, #onlineControlRow .opt')
       .forEach((b) => b.classList.toggle('selected', b.dataset.control === control));
     if (this.profile.control !== control) {
       this.profile.control = control;
@@ -383,6 +424,14 @@ class UI {
         ? `${fire} Racha: ${summary.streakDays} ${summary.streakDays === 1 ? 'día' : 'días'} entrenando` +
           (summary.trainedToday ? ' · ¡hoy ya cuenta!' : ' · entrena hoy para no perderla')
         : `${summary.totalSessions} sesiones guardadas · entrena hoy para empezar una racha`);
+    // Meta diaria: un objetivo corto y cerrable que da motivo para "una más"
+    const goal = $('#coachGoal');
+    const done = Math.min(summary.sessionsToday, DAILY_GOAL);
+    goal.classList.toggle('done', done >= DAILY_GOAL);
+    goal.textContent =
+      done >= DAILY_GOAL
+        ? `✅ Meta de hoy cumplida (${DAILY_GOAL}/${DAILY_GOAL})`
+        : `🎯 Meta de hoy: ${'●'.repeat(done)}${'○'.repeat(DAILY_GOAL - done)} ${done}/${DAILY_GOAL} sesiones · bonus +${DAILY_BONUS_XP} XP`;
     const tip = $('#coachTip');
     const btn = $('#btnCoachTrain') as HTMLButtonElement;
     if (suggestion) {
@@ -465,6 +514,37 @@ class UI {
     el.textContent = text;
     el.classList.toggle('ok', state === 'ok');
     el.classList.toggle('err', state === 'err');
+  }
+
+  /** Botón "Enviar invitación": visible solo mientras hay una sala esperando rival. */
+  setOnlineInvite(visible: boolean): void {
+    $('#btnOnlineShare').hidden = !visible;
+  }
+
+  /** Llegada por enlace de invitación: pantalla online con el código ya puesto. */
+  showOnlineJoin(code: string): void {
+    ($('#onlineCode') as HTMLInputElement).value = code;
+    this.setOnlineInvite(false);
+    this.setOnlineStatus(`Te han invitado a la sala ${code}: elige cómo juegas y pulsa «Unirse»`, 'ok');
+    this.show('online');
+  }
+
+  /** Cambia un momento el texto de un botón para confirmar una acción (p. ej. "copiado"). */
+  flashButton(sel: string, text: string, ms = 2200): void {
+    const btn = $(sel);
+    const original = btn.dataset.label ?? btn.textContent ?? '';
+    btn.dataset.label = original;
+    btn.textContent = text;
+    window.setTimeout(() => {
+      btn.textContent = original;
+    }, ms);
+  }
+
+  /** Botón principal del informe: "Jugar otra vez" o, en online, la revancha. */
+  setAgain(label = AGAIN_LABEL, enabled = true): void {
+    const btn = $('#btnAgain') as HTMLButtonElement;
+    btn.textContent = label;
+    btn.disabled = !enabled;
   }
 
   /** Pantalla del torneo: presentación de ronda, eliminación o título de campeón. */
@@ -562,8 +642,11 @@ class UI {
     this.show('report');
   }
 
-  /** Selector de desafíos con récords y estrellas. */
-  showChallenges(defs: ChallengeDef[], records: Record<string, ChallengeRecord>): void {
+  /** Selector de desafíos con récords y estrellas. `duel` = reto recibido por enlace. */
+  showChallenges(defs: ChallengeDef[], records: Record<string, ChallengeRecord>, duel = ''): void {
+    const banner = $('#challengeDuel');
+    banner.hidden = !duel;
+    banner.textContent = duel;
     $('#challengeList').innerHTML = defs
       .map((d) => {
         const r = records[d.id];
@@ -582,6 +665,7 @@ class UI {
     isNewBest: boolean,
     xpGained: number,
     leveledUp: boolean,
+    duel: { text: string; won: boolean } | null = null,
   ): void {
     $('#ceName').textContent = `${result.def.icon} ${result.def.name.toUpperCase()}`;
     $('#ceStars').textContent = '★'.repeat(result.stars) + '☆'.repeat(3 - result.stars);
@@ -591,6 +675,10 @@ class UI {
       ? '🎉 ¡Nuevo récord personal!'
       : `Récord personal: ${record.best} ${result.def.unit}`;
     $('#ceXp').textContent = `+${xpGained} XP${leveledUp ? ' · ⬆️ ¡SUBES DE NIVEL!' : ''}`;
+    const duelEl = $('#ceDuel');
+    duelEl.hidden = !duel;
+    duelEl.textContent = duel?.text ?? '';
+    duelEl.classList.toggle('won', !!duel?.won);
     this.show('challengeEnd');
   }
 
@@ -739,11 +827,11 @@ class UI {
         .map((s) => {
           const stats = s.stats
             .slice(0, 3)
-            .map((st) => `${st.lbl}: <b>${st.val}</b>`)
+            .map((st) => `${esc(st.lbl)}: <b>${esc(st.val)}</b>`)
             .join(' · ');
           return `<div class="session-card"><div class="session-head"><span>${
             s.mode === 'match' ? '🏆' : '🎯'
-          } ${s.title}</span><span class="session-date">${fmt.format(
+          } ${esc(s.title)}</span><span class="session-date">${fmt.format(
             new Date(s.date),
           )}</span></div><div class="session-stats">${stats}</div></div>`;
         })

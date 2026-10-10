@@ -1,5 +1,4 @@
-import { HISTORY_MS, SWING_COOLDOWN, SWING_MIN_DIST_BW, SWING_SPEED_BW } from '../camera/gestures';
-import { LM } from '../camera/pose';
+import { SwingDetector } from '../camera/swing';
 import type { PoseFrame } from '../camera/pose';
 import { impactZone, readBody, worstPostureCue } from './metrics';
 import type { BodyState, Level, Pt } from './metrics';
@@ -54,11 +53,6 @@ export interface TrainingSummary {
   recommendation: string;
 }
 
-interface WristSample {
-  t: number; // s
-  pos: Pt;
-}
-
 export interface DetectedSwing {
   t: number; // s
   pos: Pt;
@@ -97,8 +91,7 @@ export class TrainingSession {
   private phaseStart = 0;
   private stableFrames = 0;
   private lastFrameT = 0;
-  private history: Record<'L' | 'R', WristSample[]> = { L: [], R: [] };
-  private lastSwingT = 0;
+  private detector = new SwingDetector();
   private capturedSwing: DetectedSwing | null = null;
   private resolveTime: number | null = null; // resolución diferida: deja terminar la extensión
   private maxExt = 0; // máxima distancia muñeca-cadera vista desde la captura
@@ -133,8 +126,7 @@ export class TrainingSession {
     if (!this.body) {
       if (this.phase !== 'searching') this.setPhase('searching', t);
       this.stableFrames = 0;
-      this.history.L = [];
-      this.history.R = [];
+      this.detector.reset();
       return;
     }
 
@@ -221,41 +213,14 @@ export class TrainingSession {
     if (p !== 'result') this.feedback = null;
   }
 
-  /** Misma detección de swing que el juego: velocidad de muñeca en anchos de cuerpo. */
+  /** Misma detección de swing que el juego (SwingDetector compartido). */
   private detectSwing(frame: PoseFrame, t: number): void {
     if (frame.t === this.lastFrameT || !this.body) return;
     this.lastFrameT = frame.t;
-    const bw = this.body.bw;
-    for (const hand of ['L', 'R'] as const) {
-      const wi = hand === 'L' ? LM.L_WRIST : LM.R_WRIST;
-      const p = frame.lm[wi];
-      if (!p || (p.visibility ?? 0) < 0.4) {
-        this.history[hand] = [];
-        continue;
-      }
-      const sample: WristSample = { t, pos: { x: 1 - p.x, y: p.y } };
-      const hist = this.history[hand];
-      hist.push(sample);
-      while (hist.length > 0 && t - hist[0].t > HISTORY_MS / 1000) hist.shift();
-      if (hist.length < 3) continue;
-      const first = hist[0];
-      const dtw = sample.t - first.t;
-      if (dtw < 0.06) continue;
-      const dx = sample.pos.x - first.pos.x;
-      const dy = sample.pos.y - first.pos.y;
-      const speedBw = Math.hypot(dx, dy) / dtw / bw;
-      const distBw = Math.hypot(dx, dy) / bw;
-      if (speedBw > SWING_SPEED_BW && distBw > SWING_MIN_DIST_BW && t - this.lastSwingT > SWING_COOLDOWN) {
-        this.lastSwingT = t;
-        const overhead = first.pos.y < this.body.shoulderCenter.y && dy / dtw > 0.4;
-        const power = clamp((speedBw - SWING_SPEED_BW) / 9, 0, 1);
-        this.lastPower = power;
-        this.onSwing({ t, pos: sample.pos, power, overhead });
-        this.history.L = [];
-        this.history.R = [];
-        break;
-      }
-    }
+    const swing = this.detector.feed(t, this.body.wrists, this.body.bw, this.body.shoulderCenter.y);
+    if (!swing) return;
+    this.lastPower = swing.power;
+    this.onSwing({ t: swing.t, pos: swing.pos, power: swing.power, overhead: swing.overhead });
   }
 
   private onSwing(s: DetectedSwing): void {

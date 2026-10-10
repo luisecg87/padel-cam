@@ -3,6 +3,7 @@ import { COURT } from './court';
 import { PlayerEntity } from './player';
 import { clamp, isOverheadShot, lerp } from '../types';
 import type { Vec3 } from '../types';
+import type { ArmPose } from '../ui/input';
 import type { GameRenderer } from './renderers/GameRenderer';
 
 // ============================================================================
@@ -934,6 +935,11 @@ export class Renderer implements GameRenderer {
     if (swinging) lean += swingK * 0.22 * dirScreen;
     // Torso gira hacia el lado anticipado al prepararse (hombro acompaña)
     else lean += prepBlend * 0.13 * prepSide * (facingCamera ? -1 : 1);
+    // Pose real en vivo (cámara): la inclinación de hombros del jugador
+    // se suma a la del avatar. De frente (rival) se ve en espejo.
+    const live = p.livePose;
+    const viewFlip = facingCamera ? -1 : 1;
+    if (live) lean += live.tilt * viewFlip * 0.6;
 
     const stride = Math.sin(p.runPhase) * 0.18 * s * p.moveAmount;
     const lungeF = swingK * 0.14 * s; // zancada del golpe
@@ -1060,6 +1066,30 @@ export class Renderer implements GameRenderer {
     const shoulder = { x: armSide * shW * 0.95, y: -torsoH + 0.05 * s };
     const armLen = (0.5 + swingK * 0.1) * s; // brazo extendido en el golpe
 
+    // ---- Brazos reales del jugador (pose en vivo) ----
+    // Convierte un brazo real (anchos de hombro, relativo a su hombro) a la
+    // escala del avatar y dice cuánto manda sobre la pose propia (w 0..1).
+    const LIVE_K = 0.33 * s;
+    const liveMix = (
+      arm: ArmPose | null,
+      sh: { x: number; y: number },
+    ): { elbow: { x: number; y: number }; hand: { x: number; y: number }; w: number } | null => {
+      if (!arm) return null;
+      const elbow = { x: sh.x + arm.ex * viewFlip * LIVE_K, y: sh.y + arm.ey * LIVE_K };
+      const hand = { x: sh.x + arm.hx * viewFlip * LIVE_K, y: sh.y + arm.hy * LIVE_K };
+      // De espaldas, una mano delante del pecho quedaría pintada sobre la
+      // espalda (se lee como brazo cruzado por detrás): ahí manda la pose
+      // propia y la real entra progresivamente al salir de la silueta.
+      let w = 1;
+      if (!facingCamera) {
+        const outX = Math.abs(hand.x) - shW * 0.75;
+        const outY = Math.max(-torsoH * 0.95 - hand.y, hand.y - 0.05 * s);
+        w = clamp(Math.max(outX, outY) / (0.14 * s), 0, 1);
+      }
+      return { elbow, hand, w };
+    };
+    const paddleLive = live ? liveMix(handSign === 1 ? live.right : live.left, shoulder) : null;
+
     // ---- Brazo libre (dos segmentos) ----
     // En reposo, la mano secundaria se acerca al cuello de la pala (grip a
     // dos manos); al preparar/golpear se abre para dar equilibrio. En el
@@ -1068,7 +1098,7 @@ export class Renderer implements GameRenderer {
     const offSide = -armSide;
     const armSway = -stride * 0.5;
     const fShoulder = { x: offSide * shW * 0.92, y: -torsoH + 0.06 * s };
-    const fElbow = {
+    let fElbow = {
       x: offSide * (shW + 0.06 * s),
       y: -torsoH * 0.5 + swingK * 0.06 * s,
     };
@@ -1096,10 +1126,15 @@ export class Renderer implements GameRenderer {
         y: -0.12 * s,
       };
     }
-    const fHand = {
+    let fHand = {
       x: lerp(readyFHand.x, activeFHand.x, fBlend),
       y: lerp(readyFHand.y, activeFHand.y, fBlend),
     };
+    const freeLive = live ? liveMix(handSign === 1 ? live.left : live.right, fShoulder) : null;
+    if (freeLive) {
+      fElbow = { x: lerp(fElbow.x, freeLive.elbow.x, freeLive.w), y: lerp(fElbow.y, freeLive.elbow.y, freeLive.w) };
+      fHand = { x: lerp(fHand.x, freeLive.hand.x, freeLive.w), y: lerp(fHand.y, freeLive.hand.y, freeLive.w) };
+    }
     this.capsule(fShoulder.x, fShoulder.y, fElbow.x, fElbow.y, 0.105 * s, pal.shirt);
     this.capsule(fElbow.x, fElbow.y, fHand.x, fHand.y, 0.085 * s, pal.skin);
 
@@ -1194,13 +1229,21 @@ export class Renderer implements GameRenderer {
       };
     }
     const mid = { x: (shoulder.x + hand.x) / 2, y: (shoulder.y + hand.y) / 2 };
-    const elbow = {
+    let elbow = {
       x: mid.x + Math.cos(armAngle) * 0.08 * s * armSide * (1 - swingK * 0.7),
       y: mid.y + Math.sin(armAngle) * 0.05 * s,
     };
+    // Brazo de la pala real: la mano y el codo del jugador mandan sobre la
+    // animación propia en la medida `w` (ver liveMix).
+    const liveW = paddleLive ? paddleLive.w : 0;
+    if (paddleLive) {
+      elbow = { x: lerp(elbow.x, paddleLive.elbow.x, liveW), y: lerp(elbow.y, paddleLive.elbow.y, liveW) };
+      hand = { x: lerp(hand.x, paddleLive.hand.x, liveW), y: lerp(hand.y, paddleLive.hand.y, liveW) };
+    }
 
-    // motion trail de pala: corto y grueso
-    if (swinging && p.swingT > 0.1 && p.swingT < 0.6) {
+    // motion trail de pala: corto y grueso (solo con la animación propia:
+    // sigue su arco, no el del brazo real)
+    if (swinging && liveW < 0.5 && p.swingT > 0.1 && p.swingT < 0.6) {
       const prevSign = swingDir < 0 ? 1 : -1;
       for (const [dA, alpha] of [[0.5, 0.22], [0.95, 0.1]] as const) {
         const gA = armAngle + prevSign * dA;
@@ -1238,7 +1281,13 @@ export class Renderer implements GameRenderer {
     // por encima de la mano, ligeramente inclinada hacia su lado), como en
     // la posición de lista real de pádel — nunca colgando hacia abajo.
     // Durante el golpe sigue el ángulo del swing, como siempre.
-    const rackAngle = swinging ? armAngle * armSide : Math.PI - 0.38 * armSide;
+    let rackAngle = swinging ? armAngle * armSide : Math.PI - 0.38 * armSide;
+    if (paddleLive && liveW > 0) {
+      // Con el brazo real, la pala prolonga el antebrazo (codo → mano)
+      const realAngle = Math.atan2(hand.x - elbow.x, hand.y - elbow.y);
+      const d = Math.atan2(Math.sin(realAngle - rackAngle), Math.cos(realAngle - rackAngle));
+      rackAngle += d * liveW;
+    }
     const handleLen = 0.14 * s;
     const rackCx = hand.x + Math.sin(rackAngle) * (handleLen + 0.17 * s);
     const rackCy = hand.y + Math.cos(rackAngle) * (handleLen + 0.17 * s) * 0.85;

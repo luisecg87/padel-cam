@@ -17,10 +17,35 @@ export type MoveIntent =
   | { mode: 'velocity'; x: number; z: number } // -1..1 (teclado/táctil)
   | { mode: 'absolute'; x: number }; // posición x de pista deseada (cámara)
 
+/**
+ * Un brazo real del jugador, relativo a SU hombro y en anchos de hombro:
+ * codo (ex, ey) y mano (hx, hy). x en espejo (+ = hacia la derecha del
+ * jugador), y hacia abajo.
+ */
+export interface ArmPose {
+  ex: number;
+  ey: number;
+  hx: number;
+  hy: number;
+}
+
+/**
+ * Pose real en vivo (solo con cámara): el avatar dibuja los brazos donde
+ * los tiene de verdad el jugador. Es puramente visual: el gameplay sigue
+ * decidiéndose con MoveIntent y SwingEvent.
+ */
+export interface LivePose {
+  right: ArmPose | null; // null = brazo no visible en este momento
+  left: ArmPose | null;
+  tilt: number; // inclinación de la línea de hombros (rad, + = hombro derecho más bajo)
+}
+
 export interface ControlAdapter {
   update(dt: number): void;
   getMove(): MoveIntent;
   consumeSwings(): SwingEvent[];
+  /** Pose real en vivo; solo la aportan los controles con cámara. */
+  getPose?(): LivePose | null;
   destroy(): void;
 }
 

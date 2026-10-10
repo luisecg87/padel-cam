@@ -86,6 +86,17 @@ h3 { margin-top: 10px; }
 }
 #coachXpFill { height: 100%; background: linear-gradient(90deg, #2ecc71, #ffd166); border-radius: 3px; }
 .coach-tip { font-size: .92rem; opacity: .9; }
+.coach-goal { font-size: .9rem; font-weight: 700; letter-spacing: .3px; }
+.coach-goal:empty { display: none; }
+.coach-goal.done { color: #34d399; }
+/* Reto de un amigo (enlace compartido): se tiene que ver antes que nada */
+.duel-banner {
+  max-width: 480px; padding: 10px 16px; border-radius: 12px;
+  background: rgba(255, 209, 102, .14); border: 1px solid rgba(255, 209, 102, .5);
+  color: #ffd166; font-weight: 700; text-align: center;
+}
+.duel-banner[hidden] { display: none; }
+.duel-banner.won { background: rgba(52, 211, 153, .14); border-color: rgba(52, 211, 153, .5); color: #34d399; }
 .coach-card[hidden] { display: none; }
 
 .menu-group { display: flex; flex-direction: column; gap: 6px; align-items: center; }

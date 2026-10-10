@@ -358,6 +358,7 @@ export class ChallengeMode {
     this.opts.control.update(dt);
     for (const swing of this.opts.control.consumeSwings()) this.trySwing(swing);
 
+    this.player.livePose = this.opts.control.getPose?.() ?? null;
     const move = this.opts.control.getMove();
     if (move.mode === 'velocity') {
       this.player.applyMoveInput(move.x, move.z, dt);

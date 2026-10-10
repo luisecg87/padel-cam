@@ -2,6 +2,16 @@ import type { Side } from '../types';
 
 const POINT_LABELS = ['0', '15', '30', '40'];
 
+/** Marcador de puntos "15 - 30" visto desde quien va primero (a). */
+export function pointsLabel(a: number, b: number): string {
+  if (a === 3 && b === 3) return '40 - 40 · Punto de oro';
+  return `${POINT_LABELS[a] ?? '40'} - ${POINT_LABELS[b] ?? '40'}`;
+}
+
+export function gamesLabel(a: number, b: number): string {
+  return `Juegos ${a} - ${b}`;
+}
+
 /**
  * Puntuación de pádel: 15/30/40 con punto de oro en 40-40
  * (en 40-40 el siguiente punto gana el juego, como en el pádel moderno).
@@ -43,13 +53,10 @@ export class Score {
   }
 
   pointsLabel(): string {
-    const p = this.points.player;
-    const c = this.points.cpu;
-    if (p === 3 && c === 3) return '40 - 40 · Punto de oro';
-    return `${POINT_LABELS[p]} - ${POINT_LABELS[c]}`;
+    return pointsLabel(this.points.player, this.points.cpu);
   }
 
   gamesLabel(): string {
-    return `Juegos ${this.games.player} - ${this.games.cpu}`;
+    return gamesLabel(this.games.player, this.games.cpu);
   }
 }
