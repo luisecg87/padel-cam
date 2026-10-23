@@ -19,13 +19,26 @@ import type { ShotType } from '../types';
 // y el efecto Hit-Stop con onda expansiva de choque.
 
 const COLOR = {
-  good: '#34d399',
-  neon: '#00f5d4',
-  warn: '#fbbf24',
-  bad: '#f87171',
-  line: 'rgba(255,255,255,0.75)',
-  joint: '#ffffff',
+  good: '#00F5D4',
+  neon: '#00F5D4',
+  volt: '#CCFF00',
+  warn: '#F59E0B',
+  bad: '#FF3B5C',
+  line: 'rgba(238,242,248,0.82)',
+  joint: '#EEF2F8',
 } as const;
+
+const HUD_FONT = '"Space Grotesk", "Segoe UI", system-ui, sans-serif';
+
+/** Texto compacto para leer a 3 m tras una repetición: solo lo que falla. */
+export function compactRepCue(rep: RepResult): string {
+  const fails: string[] = [];
+  if (!rep.kneesOk) fails.push('Rodillas');
+  if (!rep.prepOk) fails.push('Armado');
+  if (!rep.stanceOk) fails.push('Pies');
+  if (!rep.timingOk) fails.push('Timing');
+  return fails.length === 0 ? '✓ Técnica limpia' : `Corrige: ${fails.join(' · ')}`;
+}
 
 /** Duración (ms) de la micro-pausa visual de impacto (Hit-Stop). */
 const HIT_STOP_MS = 55;
@@ -158,7 +171,7 @@ export class CameraTrainingView {
     const W = window.innerWidth;
     const H = window.innerHeight;
     const video = this.opts.tracker.video;
-    ctx.fillStyle = '#0a0f16';
+    ctx.fillStyle = '#060911';
     ctx.fillRect(0, 0, W, H);
     if (video.readyState >= 2 && video.videoWidth > 0) {
       const scale = Math.max(W / video.videoWidth, H / video.videoHeight);
@@ -170,7 +183,7 @@ export class CameraTrainingView {
       ctx.drawImage(video, -dw / 2, -dh / 2, dw, dh);
       ctx.restore();
       // Oscurecido sutil para que el overlay respire (destello breve durante hit-stop)
-      ctx.fillStyle = inHitStop ? 'rgba(0, 245, 212, 0.12)' : 'rgba(6, 10, 16, 0.18)';
+      ctx.fillStyle = inHitStop ? 'rgba(0, 245, 212, 0.14)' : 'rgba(6, 9, 17, 0.24)';
       ctx.fillRect(0, 0, W, H);
     }
     this.videoRect = this.computeVideoRect(W, H);
@@ -207,8 +220,19 @@ export class CameraTrainingView {
       return this.px({ x: 1 - p.x, y: p.y });
     };
     ctx.lineCap = 'round';
+    ctx.strokeStyle = 'rgba(6, 9, 17, 0.55)';
+    ctx.lineWidth = 7;
+    for (const [a, b] of SKELETON) {
+      const pa = pt(a);
+      const pb = pt(b);
+      if (!pa || !pb) continue;
+      ctx.beginPath();
+      ctx.moveTo(pa.x, pa.y);
+      ctx.lineTo(pb.x, pb.y);
+      ctx.stroke();
+    }
     ctx.strokeStyle = COLOR.line;
-    ctx.lineWidth = 3;
+    ctx.lineWidth = 3.5;
     for (const [a, b] of SKELETON) {
       const pa = pt(a);
       const pb = pt(b);
@@ -230,16 +254,37 @@ export class CameraTrainingView {
     for (const i of [LM.L_WRIST, LM.R_WRIST]) {
       const p = pt(i);
       if (!p) continue;
-      ctx.fillStyle = '#7dd3fc';
+      ctx.fillStyle = COLOR.neon;
       ctx.beginPath();
       ctx.arc(p.x, p.y, 7, 0, Math.PI * 2);
       ctx.fill();
-      ctx.strokeStyle = 'rgba(125, 211, 252, 0.5)';
-      ctx.lineWidth = 2;
+      ctx.strokeStyle = 'rgba(0, 245, 212, 0.45)';
+      ctx.lineWidth = 2.5;
       ctx.beginPath();
-      ctx.arc(p.x, p.y, 12, 0, Math.PI * 2);
+      ctx.arc(p.x, p.y, 13, 0, Math.PI * 2);
       ctx.stroke();
     }
+  }
+
+  /** Etiqueta en cápsula oscura de alto contraste (legible a 3 m sobre cualquier fondo). */
+  private drawLabel(text: string, x: number, y: number, col: string, size: number): void {
+    const ctx = this.ctx;
+    ctx.save();
+    ctx.font = `700 ${size}px ${HUD_FONT}`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    const w = ctx.measureText(text).width + size * 1.3;
+    const h = size * 1.9;
+    ctx.fillStyle = 'rgba(6, 9, 17, 0.84)';
+    ctx.strokeStyle = col;
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.roundRect(x - w / 2, y - h / 2, w, h, h / 2);
+    ctx.fill();
+    ctx.stroke();
+    ctx.fillStyle = col;
+    ctx.fillText(text, x, y + 1);
+    ctx.restore();
   }
 
   // ---------- Guía visual a 3 metros durante `prep` ----------
@@ -267,7 +312,7 @@ export class CameraTrainingView {
     ctx.lineJoin = 'round';
 
     // 1. Silueta guía del brazo armado (hombro -> codo -> mano con pala)
-    ctx.strokeStyle = armReady ? 'rgba(0, 245, 212, 0.85)' : 'rgba(251, 191, 36, 0.65)';
+    ctx.strokeStyle = armReady ? 'rgba(0, 245, 212, 0.9)' : 'rgba(245, 158, 11, 0.75)';
     ctx.lineWidth = armReady ? 8 : 6;
     ctx.setLineDash(armReady ? [] : [10, 8]);
     ctx.beginPath();
@@ -287,7 +332,7 @@ export class CameraTrainingView {
       ctx.fill();
     }
 
-    ctx.fillStyle = armReady ? 'rgba(0, 245, 212, 0.22)' : 'rgba(251, 191, 36, 0.14)';
+    ctx.fillStyle = armReady ? 'rgba(0, 245, 212, 0.22)' : 'rgba(245, 158, 11, 0.16)';
     ctx.strokeStyle = armCol;
     ctx.lineWidth = armReady ? 4.5 : 3;
     ctx.beginPath();
@@ -296,15 +341,13 @@ export class CameraTrainingView {
     ctx.stroke();
 
     // Etiqueta legible a 3 metros
-    ctx.font = '800 13px "Segoe UI", system-ui, sans-serif';
-    ctx.textAlign = 'center';
-    ctx.fillStyle = armCol;
+    const labelSize = Math.round(Math.min(Math.max(ringR * 0.42, 16), 26));
     const armLabel = armReady
       ? '✓ ARMADO LISTO'
       : !body.prepared
-        ? '🎾 ARMA AQUÍ'
+        ? 'ARMA AQUÍ'
         : '↻ GIRA HOMBROS';
-    ctx.fillText(armLabel, rt.x, rt.y + ringR + 18);
+    this.drawLabel(armLabel, rt.x, rt.y + ringR + labelSize * 1.4, armCol, labelSize);
 
     // 3. Golpes aéreos (bandeja/remate): anillo objetivo superior para levantar la mano guía
     if (requiresGuideHand(currentShot) && guides.guideTarget && guides.guideShoulder) {
@@ -314,7 +357,7 @@ export class CameraTrainingView {
       const gCol = guideOk ? COLOR.neon : COLOR.warn;
       const gR = Math.max(ringR * 0.85, 24);
 
-      ctx.strokeStyle = guideOk ? 'rgba(0, 245, 212, 0.75)' : 'rgba(251, 191, 36, 0.55)';
+      ctx.strokeStyle = guideOk ? 'rgba(0, 245, 212, 0.8)' : 'rgba(245, 158, 11, 0.65)';
       ctx.lineWidth = 5;
       ctx.setLineDash(guideOk ? [] : [8, 7]);
       ctx.beginPath();
@@ -333,7 +376,7 @@ export class CameraTrainingView {
         ctx.fill();
       }
 
-      ctx.fillStyle = guideOk ? 'rgba(0, 245, 212, 0.2)' : 'rgba(251, 191, 36, 0.14)';
+      ctx.fillStyle = guideOk ? 'rgba(0, 245, 212, 0.2)' : 'rgba(245, 158, 11, 0.16)';
       ctx.strokeStyle = gCol;
       ctx.lineWidth = guideOk ? 4 : 2.8;
       ctx.beginPath();
@@ -341,8 +384,7 @@ export class CameraTrainingView {
       ctx.fill();
       ctx.stroke();
 
-      ctx.fillStyle = gCol;
-      ctx.fillText(guideOk ? '✓ MANO GUÍA' : '☝️ SUBE MANO LIBRE', gt.x, gt.y - gR - 10);
+      this.drawLabel(guideOk ? '✓ MANO GUÍA' : '↑ SUBE MANO LIBRE', gt.x, gt.y - gR - labelSize * 1.3, gCol, labelSize);
     }
 
     ctx.restore();
@@ -378,7 +420,7 @@ export class CameraTrainingView {
       const age = (now - this.feedbackShownAt) / 1000;
       const pulse = 1 + Math.max(0, 0.25 - age) * 1.4;
       ctx.strokeStyle = level === 'good' ? COLOR.neon : COLOR[level];
-      ctx.lineWidth = 4;
+      ctx.lineWidth = 5;
       ctx.globalAlpha = Math.max(0.15, 1 - age * 0.8);
       ctx.beginPath();
       ctx.arc(c.x, c.y, r * pulse, 0, Math.PI * 2);
@@ -396,14 +438,14 @@ export class CameraTrainingView {
       ? COLOR.good
       : prepReady
         ? COLOR.neon
-        : 'rgba(255,255,255,0.55)';
-    ctx.lineWidth = active ? 3.5 : prepReady ? 3 : 2;
+        : 'rgba(238,242,248,0.6)';
+    ctx.lineWidth = active ? 4.5 : prepReady ? 3.5 : 2.5;
     ctx.beginPath();
     ctx.arc(c.x, c.y, r, 0, Math.PI * 2);
     ctx.stroke();
     ctx.setLineDash([]);
     if (active) {
-      ctx.fillStyle = 'rgba(52, 211, 153, 0.14)';
+      ctx.fillStyle = 'rgba(0, 245, 212, 0.16)';
       ctx.beginPath();
       ctx.arc(c.x, c.y, r, 0, Math.PI * 2);
       ctx.fill();
@@ -440,8 +482,8 @@ export class CameraTrainingView {
     ctx.arc(c.x, c.y, ringRadius, 0, Math.PI * 2);
     ctx.stroke();
 
-    // Segundo anillo interior dorado/blanco
-    ctx.strokeStyle = `rgba(253, 253, 166, ${alpha * 0.75})`;
+    // Segundo anillo interior volt lime (energía de impacto)
+    ctx.strokeStyle = `rgba(204, 255, 0, ${alpha * 0.8})`;
     ctx.lineWidth = Math.max(1.5, (1 - k) * 5);
     ctx.beginPath();
     ctx.arc(c.x, c.y, r * (0.6 + ease * 1.4), 0, Math.PI * 2);
@@ -483,7 +525,7 @@ export class CameraTrainingView {
       const kg = Math.max(k - lag, 0);
       const gx = start.x + (c.x - start.x) * kg;
       const gy = start.y + (c.y - start.y) * kg - Math.sin(kg * Math.PI) * r * 1.3;
-      ctx.fillStyle = `rgba(230, 236, 42, ${alpha})`;
+      ctx.fillStyle = `rgba(204, 255, 0, ${alpha})`;
       ctx.beginPath();
       ctx.arc(gx, gy, ballR * (0.75 - lag), 0, Math.PI * 2);
       ctx.fill();
@@ -491,18 +533,18 @@ export class CameraTrainingView {
 
     // Halo + bola (mismo lenguaje visual que la bola del juego)
     const glow = ctx.createRadialGradient(x, y, ballR * 0.4, x, y, ballR * 2.4);
-    glow.addColorStop(0, 'rgba(232, 238, 60, 0.4)');
-    glow.addColorStop(1, 'rgba(232, 238, 60, 0)');
+    glow.addColorStop(0, 'rgba(204, 255, 0, 0.42)');
+    glow.addColorStop(1, 'rgba(204, 255, 0, 0)');
     ctx.fillStyle = glow;
     ctx.beginPath();
     ctx.arc(x, y, ballR * 2.4, 0, Math.PI * 2);
     ctx.fill();
     const g = ctx.createRadialGradient(x - ballR * 0.3, y - ballR * 0.3, ballR * 0.2, x, y, ballR);
-    g.addColorStop(0, '#fdfda6');
-    g.addColorStop(0.65, '#e6ec2a');
-    g.addColorStop(1, '#c2c916');
+    g.addColorStop(0, '#F2FFB3');
+    g.addColorStop(0.65, '#CCFF00');
+    g.addColorStop(1, '#9FCC00');
     ctx.fillStyle = g;
-    ctx.strokeStyle = 'rgba(13, 24, 38, 0.85)';
+    ctx.strokeStyle = 'rgba(6, 9, 17, 0.9)';
     ctx.lineWidth = Math.max(ballR * 0.14, 1.5);
     ctx.beginPath();
     ctx.arc(x, y, ballR, 0, Math.PI * 2);
@@ -533,7 +575,7 @@ export class CameraTrainingView {
     let phaseTxt = '';
     let phaseCls = '';
     if (s.phase === 'searching') {
-      phaseTxt = 'Colócate frente a la cámara, de la cintura hacia arriba';
+      phaseTxt = 'Ponte en cuadro · de cintura arriba';
       phaseCls = 'warn';
     } else if (s.phase === 'announce') {
       if (s.express && s.repIndex % 3 === 0) {
@@ -552,12 +594,12 @@ export class CameraTrainingView {
         body.shoulderTurned &&
         (!requiresGuideHand(currentShot) || body.guideHandUp);
       if (fullPrep) {
-        phaseTxt = '✓ ARMADO LISTO · ESPERA LA BOLA';
+        phaseTxt = '✓ Armado · espera la bola';
         phaseCls = 'good';
       } else if (body && !body.prepared) {
         phaseTxt = 'PREPARA LA PALA';
       } else if (body && requiresShoulderTurn(currentShot) && !body.shoulderTurned) {
-        phaseTxt = 'PERFILA LOS HOMBROS (PONTE DE LADO)';
+        phaseTxt = 'Ponte de lado';
       } else {
         phaseTxt = 'LEVANTA LA MANO LIBRE';
       }
@@ -581,7 +623,7 @@ export class CameraTrainingView {
     const cueEl = $('#trainCue');
     const lastRep = s.reps[s.reps.length - 1];
     if (s.phase === 'result' && lastRep) {
-      cueEl.textContent = formatRepBiomechanics(lastRep);
+      cueEl.textContent = compactRepCue(lastRep);
       const allOk = lastRep.kneesOk && lastRep.prepOk && lastRep.stanceOk && lastRep.timingOk;
       cueEl.className = `train-cue show ${allOk ? 'good' : lastRep.correct ? 'warn' : 'bad'}`;
     } else if (body && (s.phase === 'prep' || s.phase === 'strike' || s.phase === 'announce')) {

@@ -219,34 +219,58 @@ class UI {
     card.hidden = false;
 
     const ratingInfo = xp ? calculatePadelRating(summary, xp) : summary.padelRating;
-    $('#coachPadelRating').textContent = `NIVEL ${ratingInfo.formatted}`;
+    $('#coachPadelRating').textContent = ratingInfo.formatted;
     $('#coachPadelCategory').textContent = ratingInfo.category;
 
+    // Consistencia 0-100 en anillo
+    const cons = summary.overallConsistency;
+    const consCol = cons >= 75 ? 'var(--cyan)' : cons >= 50 ? 'var(--warn)' : 'var(--bad)';
+    $('#coachConsVal').textContent = cons > 0 ? `${cons}` : '—';
+    $('#coachConsVal').style.color = cons > 0 ? consCol : '';
+    $('#coachConsRing').style.background =
+      `conic-gradient(${cons > 0 ? consCol : 'transparent'} ${cons * 3.6}deg, rgba(255,255,255,.08) 0deg)`;
+
+    // Racha + nivel XP + estado técnico
+    $('#coachStreakVal').textContent = `${summary.streakDays}`;
+    $('#coachXpLevel').textContent = xp && xp.xp > 0 ? `${xp.level}` : '—';
+    const stateEl = $('#coachState');
+    if (summary.dominantFault) {
+      stateEl.textContent = BIOMECHANIC_LABELS[summary.dominantFault];
+      stateEl.dataset.state = 'warn';
+    } else if (cons >= 75) {
+      stateEl.textContent = 'Óptimo';
+      stateEl.dataset.state = 'good';
+    } else if (summary.totalSessions > 0) {
+      stateEl.textContent = 'En progreso';
+      stateEl.dataset.state = cons > 0 && cons < 50 ? 'bad' : 'none';
+    } else {
+      stateEl.textContent = 'Sin evaluar';
+      stateEl.dataset.state = 'none';
+    }
+
     if (xp && xp.xp > 0) {
-      const consTxt =
-        summary.overallConsistency > 0 ? ` · Consistencia técnica: ${summary.overallConsistency}/100` : '';
-      $('#coachLevel').textContent = `XP Nivel ${xp.level} · ${xp.title}${consTxt}`;
+      $('#coachLevel').textContent = `${xp.title} · ${xp.levelXp} / ${xp.levelSize} XP`;
       $('#coachXpFill').style.width = `${Math.round((xp.levelXp / xp.levelSize) * 100)}%`;
       ($('#coachXpBar') as HTMLElement).style.display = 'block';
     } else {
-      $('#coachLevel').textContent = 'Completa tu Calentamiento Express o sesión técnica para subir tu Padel Rating';
+      $('#coachLevel').textContent = 'Completa un Calentamiento Express o una sesión técnica para activar tu pase';
       ($('#coachXpBar') as HTMLElement).style.display = 'none';
     }
-    const fire = summary.streakDays >= 3 ? '🔥🔥' : '🔥';
-    const cup = trophies > 0 ? `🏆 ${trophies} · ` : '';
+    const cup = trophies > 0 ? `${trophies} ${trophies === 1 ? 'trofeo' : 'trofeos'} · ` : '';
     $('#coachStreak').textContent =
       cup +
       (summary.streakDays > 0
-        ? `${fire} Racha: ${summary.streakDays} ${summary.streakDays === 1 ? 'día' : 'días'} entrenando` +
-          (summary.trainedToday ? ' · ¡hoy ya cuenta!' : ' · entrena hoy para no perderla')
+        ? summary.trainedToday
+          ? 'Hoy ya cuenta para tu racha'
+          : 'Entrena hoy para no perder la racha'
         : `${summary.totalSessions} sesiones guardadas · entrena hoy para empezar una racha`);
     const tip = $('#coachTip');
     const btn = $('#btnCoachTrain') as HTMLButtonElement;
     if (suggestion) {
-      tip.textContent = `🧑‍🏫 ${suggestion.reason}`;
+      tip.textContent = suggestion.reason;
       btn.hidden = false;
     } else {
-      tip.textContent = '🧑‍🏫 Lanza el Calentamiento Express (3 min) o un partido para evaluar tu nivel.';
+      tip.textContent = 'Lanza el Calentamiento Express (3 min) o un partido para evaluar tu nivel.';
       btn.hidden = true;
     }
   }
@@ -378,10 +402,13 @@ class UI {
       )
       .join('');
     $('#reportTips').innerHTML = report.tips
-      .map((t) => `<div class="tip${t.warn ? ' warn' : ''}">${t.warn ? '⚠️' : '✅'} ${t.text}</div>`)
+      .map(
+        (t) =>
+          `<div class="tip${t.warn ? ' warn' : ''}"><span class="tip-tag">${t.warn ? 'AJUSTE' : 'BIEN'}</span><span>${t.text}</span></div>`,
+      )
       .join('');
     const parts = [
-      saved ? '💾 Informe guardado en «Mi progresión»' : '',
+      saved ? 'Informe guardado en «Mi progresión»' : '',
       xpNote,
     ].filter(Boolean);
     $('#reportSaved').textContent = parts.join(' · ');
@@ -448,7 +475,7 @@ class UI {
         biomechanics: s.biomechanics,
         pillars: s.pillars,
       });
-    $('#tsPadelRating').textContent = `NIVEL ${pRating.formatted}`;
+    $('#tsPadelRating').textContent = pRating.formatted;
     $('#tsPadelCat').textContent = pRating.category;
 
     const deltaInfo = formatRatingDelta(ratingDelta);
@@ -458,7 +485,7 @@ class UI {
 
     // Puntuación de consistencia técnica general acumulada en el historial (0..100)
     const overall = overallConsistency ?? s.consistency;
-    $('#tsOverallBadge').textContent = `📊 Consistencia técnica acumulada (historial): ${overall} / 100`;
+    $('#tsOverallBadge').textContent = `Consistencia acumulada · ${overall} / 100`;
 
     // Gauge de consistencia de la sesión (anillo conic-gradient, color por estado)
     const pct = s.consistency;
@@ -469,18 +496,26 @@ class UI {
     gv.textContent = `${pct}%`;
     gv.style.color = col;
 
-    // 1. Desglose de fallos por tipo de biomecánica (rodillas, armado, separación de pies, timing)
-    const bioOrder: BiomechanicKey[] = ['knees', 'prep', 'stance', 'timing'];
-    $('#tsBioGrid').innerHTML = bioOrder
+    // 1. Telemetría biomecánica: % de golpes limpios por pilar (rodillas, hombros, mano guía, armado, pies, timing)
+    const preferred = ['knees', 'shoulders', 'shoulderTurn', 'guideHand', 'guide', 'prep', 'stance', 'timing'];
+    const rank = (k: string): number => {
+      const i = preferred.indexOf(k);
+      return i === -1 ? 99 : i;
+    };
+    const bioKeys = (Object.keys(s.biomechanics) as BiomechanicKey[]).sort((a, b) => rank(a) - rank(b));
+    const totalReps = Math.max(s.reps.length, 1);
+    const bioGrid = $('#tsBioGrid');
+    bioGrid.dataset.count = `${bioKeys.length}`;
+    bioGrid.innerHTML = bioKeys
       .map((k) => {
-        const faults = s.biomechanics[k];
+        const faults = s.biomechanics[k] ?? 0;
         const isDom = s.dominantFault === k && faults > 0;
         const cls = isDom || faults >= 3 ? 'bad' : faults > 0 ? 'warn' : 'good';
-        const status =
-          faults === 0
-            ? '✓ 0 fallos'
-            : `${isDom ? '⚠️ ' : ''}${faults} ${faults === 1 ? 'fallo' : 'fallos'}`;
-        return `<div class="ts-bio-item ${cls}"><span class="bio-name">${BIOMECHANIC_LABELS[k]}</span><span class="bio-val">${status}</span></div>`;
+        const clean = Math.max(0, Math.round(((totalReps - faults) / totalReps) * 100));
+        const state = cls === 'good' ? 'Óptimo' : cls === 'warn' ? 'Ajustar' : isDom ? 'Prioridad' : 'Error';
+        const faultsTxt = faults === 0 ? 'sin fallos' : `${faults} ${faults === 1 ? 'fallo' : 'fallos'}`;
+        const label = BIOMECHANIC_LABELS[k] ?? k;
+        return `<div class="ts-bio-item ${cls}"><div class="bio-top"><span class="bio-name">${label}</span><span class="bio-dot"></span></div><span class="bio-val">${clean}<small>%</small></span><div class="bio-meter"><i style="width:${clean}%"></i></div><div class="bio-state"><b>${state}</b><span>${faultsTxt}</span></div></div>`;
       })
       .join('');
 
@@ -491,18 +526,21 @@ class UI {
     const badgeCls = cc.dominantFault === null ? 'good' : '';
     $('#tsCoachCard').innerHTML = `
       <div class="ts-coach-head">
-        <span class="ts-coach-title">🧑‍🏫 Diagnóstico del Coach</span>
+        <span class="ts-coach-title">Diagnóstico del Coach</span>
         <span class="ts-coach-badge ${badgeCls}">${cc.badgeText}</span>
       </div>
       <p class="ts-coach-diag">${cc.diagnosis}</p>
       <div class="ts-coach-drill">
-        <b>🎯 Ejercicio recomendado: ${cc.exerciseName}</b>
+        <span class="drill-k">EJERCICIO RECOMENDADO</span>
+        <b>${cc.exerciseName}</b>
         <span>${cc.exerciseReason}</span>
       </div>
     `;
 
     this.recommendedTarget = { shot: cc.targetShot, drill: cc.targetDrill };
-    ($('#btnTrainRecommended') as HTMLButtonElement).textContent = `🎯 ${cc.exerciseName}`;
+    const recBtn = $('#btnTrainRecommended') as HTMLButtonElement;
+    recBtn.classList.add('coach-cta');
+    recBtn.innerHTML = `<span><span class="cta-k">ENTRENAR AHORA</span><span class="cta-v">${cc.exerciseName}</span></span><span class="cta-arrow">→</span>`;
 
     // Preparar datos de la Ficha Técnica Compartible para esta sesión
     this.lastSummaryShareData = {
@@ -549,10 +587,10 @@ class UI {
     const yOf = (ms: number): number => midY - (Math.max(-maxMs, Math.min(maxMs, ms)) / maxMs) * (H / 2 - 12);
 
     // Banda de ventana ideal ±150 ms
-    ctx.fillStyle = 'rgba(255,255,255,0.06)';
+    ctx.fillStyle = 'rgba(0,245,212,0.07)';
     ctx.fillRect(padL, yOf(150), W - padL - padR, yOf(-150) - yOf(150));
     // Línea base 0
-    ctx.strokeStyle = 'rgba(255,255,255,0.35)';
+    ctx.strokeStyle = 'rgba(255,255,255,0.28)';
     ctx.lineWidth = 1;
     ctx.beginPath();
     ctx.moveTo(padL, midY);
@@ -584,7 +622,7 @@ class UI {
         return;
       }
       const abs = Math.abs(r.dtMs);
-      const color = abs <= 150 ? '#34d399' : abs <= 350 ? '#fbbf24' : '#f87171';
+      const color = abs <= 150 ? '#00F5D4' : abs <= 350 ? '#F59E0B' : '#FF3B5C';
       const y = yOf(r.dtMs);
       const top = Math.min(y, midY);
       const h = Math.max(Math.abs(y - midY), 3);
@@ -594,8 +632,8 @@ class UI {
       ctx.fill();
       // Etiqueta directa solo en la peor desviación (selectiva)
       if (i === maxIdx && abs > 150) {
-        ctx.fillStyle = 'rgba(255,255,255,0.75)';
-        ctx.font = '10px "Segoe UI", sans-serif';
+        ctx.fillStyle = 'rgba(238,242,248,0.85)';
+        ctx.font = '700 11px "Space Grotesk", "Segoe UI", sans-serif';
         ctx.textAlign = 'center';
         const ly = r.dtMs > 0 ? top - 4 : top + h + 11;
         ctx.fillText(`${r.dtMs > 0 ? '+' : ''}${r.dtMs} ms`, cx, ly);
@@ -606,19 +644,19 @@ class UI {
   showProgress(sessions: SavedSession[], corrections: Correction[], trophies = 0): void {
     const summary = summarize(sessions);
     const pRating = summary.padelRating;
-    $('#progressPadelRating').textContent = `NIVEL ${pRating.formatted}`;
+    $('#progressPadelRating').textContent = pRating.formatted;
     $('#progressPadelCat').textContent = pRating.category;
-    $('#progressStreakBadge').textContent = `🔥 ${summary.streakDays} ${
+    $('#progressStreakBadge').textContent = `Racha ${summary.streakDays} ${
       summary.streakDays === 1 ? 'día' : 'días'
     }`;
 
     const metaParts: string[] = [];
-    if (trophies > 0) metaParts.push(`🏆 Torneos ganados: ${trophies}`);
+    if (trophies > 0) metaParts.push(`Torneos ganados: ${trophies}`);
     if (summary.overallConsistency > 0) {
-      metaParts.push(`📊 Consistencia técnica general: ${summary.overallConsistency} / 100`);
+      metaParts.push(`Consistencia técnica: ${summary.overallConsistency} / 100`);
     }
     if (summary.dominantFault) {
-      metaParts.push(`🎯 Foco biomecánico: ${BIOMECHANIC_LABELS[summary.dominantFault]}`);
+      metaParts.push(`Foco: ${BIOMECHANIC_LABELS[summary.dominantFault]}`);
     }
     $('#progressTrophies').textContent = metaParts.join(' · ');
 
@@ -651,9 +689,11 @@ class UI {
         .slice(0, 6)
         .map(
           (c) =>
-            `<div class="tip${c.active ? ' warn' : ''}"><b>${
-              c.active ? '📌 Pendiente' : '✅ Sin repetir últimamente'
-            }</b> · vista en ${c.count} ${c.count === 1 ? 'sesión' : 'sesiones'}<br>${c.text}</div>`,
+            `<div class="tip${c.active ? ' warn' : ''}"><span class="tip-tag">${
+              c.active ? 'PENDIENTE' : 'SUPERADA'
+            }</span><span><small class="tip-meta">Vista en ${c.count} ${
+              c.count === 1 ? 'sesión' : 'sesiones'
+            }</small>${c.text}</span></div>`,
         )
         .join('');
     }
@@ -676,9 +716,7 @@ class UI {
             .slice(0, 3)
             .map((st) => `${st.lbl}: <b>${st.val}</b>`)
             .join(' · ');
-          return `<div class="session-card"><div class="session-head"><span>${
-            s.mode === 'match' ? '🏆' : '🎯'
-          } ${s.title}</span><span class="session-date">${fmt.format(
+          return `<div class="session-card"><div class="session-head"><span>${s.title}</span><span class="session-date">${fmt.format(
             new Date(s.date),
           )}</span></div><div class="session-stats">${stats}</div></div>`;
         })
