@@ -4,10 +4,9 @@ import { PlayerEntity } from '../game/player';
 import { sfx } from '../audio/sfx';
 import { ui } from '../ui/screens';
 import { buildInputMsg, OnlineSession } from './online';
-import type { HudState } from './online';
+import type { HudState, MatchNetState } from './online';
 import type { GameRenderer } from '../game/renderers/GameRenderer';
 import type { ControlAdapter } from '../ui/input';
-import type { ShotType } from '../types';
 
 // Vista del invitado: no simula nada. Envía su input al anfitrión y renderiza
 // el estado recibido con el mundo espejado (el invitado siempre se ve abajo).
@@ -33,6 +32,7 @@ export class GuestMatchView {
   private prevBz = 0;
   private prevBy = 0;
   private prevDy = 0;
+  private prevDzDir = 0;
   private raf = 0;
   private lastT = 0;
   private running = false;
@@ -40,7 +40,7 @@ export class GuestMatchView {
   constructor(opts: GuestOptions) {
     this.opts = opts;
     opts.session.onMessage = (m) => {
-      if (m.t === 'st') this.apply(m.b, m.p, m.c, m.hud);
+      if (m.t === 'st') this.apply(m);
       else if (m.t === 'end') {
         this.stop();
         opts.onEnd(m.title, m.games);
@@ -77,12 +77,7 @@ export class GuestMatchView {
     ui.setReplay(false);
   }
 
-  private apply(
-    b: [number, number, number, number],
-    p: [number, number, ShotType | null, number],
-    c: [number, number, ShotType | null, number],
-    hud: HudState,
-  ): void {
+  private apply({ b, p, c, hud }: MatchNetState): void {
     // Bola espejada + estela local
     this.ball.trail.push({ ...this.ball.pos });
     if (this.ball.trail.length > 9) this.ball.trail.shift();
@@ -116,20 +111,26 @@ export class GuestMatchView {
     this.rival.swingType = p[2];
     this.rival.swingT = p[3];
 
-    // HUD retransmitido
+    // HUD y eventos tipados retransmitidos
     if (!this.hud || this.hud.games !== hud.games || this.hud.points !== hud.points) {
       ui.updateScore(hud.games, hud.points);
     }
     if (!this.hud || this.hud.serve !== hud.serve) ui.setServeInfo(hud.serve);
     if ((!this.hud || this.hud.toastN !== hud.toastN) && hud.toast) {
       ui.toast(hud.toast, 1600);
-      if (hud.toast.includes('gana el partido')) sfx.cheer(true);
-      else if (hud.toast.includes('Punto para Invitado')) sfx.pointWin();
-      else if (hud.toast.includes('Punto para')) sfx.pointLose();
+      const evt = hud.toastEvt;
+      if (evt?.kind === 'match') {
+        sfx.cheer(true);
+      } else if (evt?.kind === 'game' && evt.winner === 'cpu') {
+        sfx.gameWin();
+      } else if (evt?.kind === 'point' || evt?.kind === 'game') {
+        if (evt.winner === 'cpu') sfx.pointWin();
+        else if (evt.winner === 'player') sfx.pointLose();
+      } else if (evt?.kind === 'fault') {
+        sfx.fault();
+      }
     }
     if (!this.hud || this.hud.replay !== hud.replay) ui.setReplay(hud.replay);
     this.hud = hud;
   }
-
-  private prevDzDir = 0;
 }

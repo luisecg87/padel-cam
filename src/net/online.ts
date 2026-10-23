@@ -1,7 +1,7 @@
 import Peer from 'peerjs';
 import type { DataConnection } from 'peerjs';
 import { clamp } from '../types';
-import type { ShotType } from '../types';
+import type { Side, ShotType } from '../types';
 import type { ControlAdapter, MoveIntent, SwingEvent } from '../ui/input';
 
 // Partida online 1v1 por WebRTC (P2P). El anfitrión simula el partido completo
@@ -28,21 +28,31 @@ interface InputMsg {
   sw: Array<{ d: -1 | 0 | 1; o: boolean; p: number }>;
 }
 
+export interface NetToastEvent {
+  kind: 'point' | 'game' | 'match' | 'fault' | 'info';
+  /** Lado ganador en coordenadas del anfitrión ('player' = anfitrión, 'cpu' = invitado). */
+  winner?: Side;
+}
+
 export interface HudState {
   games: string;
   points: string;
   serve: string;
   toast: string;
   toastN: number; // secuencia: el invitado muestra el toast cuando cambia
+  toastEvt?: NetToastEvent | null;
   replay: boolean;
 }
 
-interface StateMsg {
-  t: 'st';
+export interface MatchNetState {
   b: [number, number, number, number];
   p: [number, number, ShotType | null, number];
   c: [number, number, ShotType | null, number];
   hud: HudState;
+}
+
+export interface StateMsg extends MatchNetState {
+  t: 'st';
 }
 
 interface EndMsg {

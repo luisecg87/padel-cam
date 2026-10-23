@@ -12,6 +12,7 @@ import type { SwingForm } from '../ui/input';
 import { CPU_PALETTE } from './render';
 import type { GameRenderer } from './renderers/GameRenderer';
 import type { Rival } from '../modes/tournament';
+import type { MatchNetState, NetToastEvent } from '../net/online';
 import type { ControlAdapter, SwingEvent } from '../ui/input';
 import type { ControlMode, Difficulty, Side, ShotType } from '../types';
 
@@ -84,6 +85,12 @@ export class MatchMode {
   private lastPlayerTiming = 0;
   private coachCooldown = 0;
 
+  // Estado estructurado de HUD y eventos para retransmisión online (sin leer el DOM)
+  private serveInfoText = '';
+  private lastToast = '';
+  private toastN = 0;
+  private lastToastEvt: NetToastEvent | null = null;
+
   // Repetición a cámara lenta de puntos espectaculares
   private frames: ReplayFrame[] = [];
   private postFrames = 0; // frames grabados tras el fin del punto (deja ver el bote final)
@@ -134,18 +141,33 @@ export class MatchMode {
     return this.opts.p1Name ?? 'Jugador 1';
   }
 
-  /** Estado mínimo para retransmitir la partida a un rival online. */
-  netState(): {
-    b: [number, number, number, number];
-    p: [number, number, ShotType | null, number];
-    c: [number, number, ShotType | null, number];
-    replay: boolean;
-  } {
+  private setServeInfo(text: string): void {
+    this.serveInfoText = text;
+    ui.setServeInfo(text);
+  }
+
+  private emitToast(text: string, ms?: number, evt: NetToastEvent = { kind: 'info' }): void {
+    this.toastN++;
+    this.lastToast = text;
+    this.lastToastEvt = evt;
+    ui.toast(text, ms);
+  }
+
+  /** Estado tipado del partido y del HUD para retransmitir a un rival online. */
+  netState(): MatchNetState {
     return {
       b: [this.ball.pos.x, this.ball.pos.y, this.ball.pos.z, this.ball.active ? 1 : 0],
       p: [this.player.x, this.player.z, this.player.swingType, this.player.swingT],
       c: [this.cpu.x, this.cpu.z, this.cpu.swingType, this.cpu.swingT],
-      replay: this.state === 'replay',
+      hud: {
+        games: this.score.gamesLabel(),
+        points: this.score.pointsLabel(),
+        serve: this.serveInfoText,
+        toast: this.lastToast,
+        toastN: this.toastN,
+        toastEvt: this.lastToastEvt,
+        replay: this.state === 'replay',
+      },
     };
   }
 
@@ -209,7 +231,7 @@ export class MatchMode {
     this.postFrames = 0;
     this.pendingReplay = false;
 
-    ui.setServeInfo(
+    this.setServeInfo(
       server === 'player'
         ? `${this.isDuel ? `Saque de ${this.p1Name}` : 'Tu saque'} (${this.serveNumber}º) · golpea para sacar`
         : `Saque de ${this.rivalName} (${this.serveNumber}º)${this.isDuel ? ' · golpea para sacar' : ''}`,
@@ -252,7 +274,7 @@ export class MatchMode {
     sfx.fault();
     if (this.serveNumber === 1) {
       this.serveNumber = 2;
-      ui.toast('¡Falta de saque!', 1100);
+      this.emitToast('¡Falta de saque!', 1100, { kind: 'fault' });
       this.state = 'pointOver';
       this.pointOverTimer = 1.1;
     } else {
@@ -356,7 +378,8 @@ export class MatchMode {
       if (winner === 'player') sfx.pointWin();
       else sfx.pointLose();
     }
-    ui.toast(msg, res === 'match' ? 2400 : 1600);
+    const evtKind: NetToastEvent['kind'] = res === 'match' ? 'match' : res === 'game' ? 'game' : 'point';
+    this.emitToast(msg, res === 'match' ? 2400 : 1600, { kind: evtKind, winner });
 
     this.serveNumber = 1;
     this.pointOverTimer = res === 'match' ? 2.4 : 1.7;
@@ -400,7 +423,7 @@ export class MatchMode {
       else if (this.lastPlayerTiming > 0.5) advice = 'prepara la pala antes: estás llegando tarde';
       else if (this.lastPlayerTiming < -0.5) advice = 'espera la bola, estás golpeando antes de tiempo';
       else advice = 'apunta al centro un par de bolas y recupera sensaciones';
-      window.setTimeout(() => ui.toast(`🧑‍🏫 Coach: ${advice}`, 2200), 1200);
+      window.setTimeout(() => this.emitToast(`🧑‍🏫 Coach: ${advice}`, 2200), 1200);
     }
   }
 
@@ -421,7 +444,7 @@ export class MatchMode {
     if (this.state !== 'rally' || this.lastHitBy === side) return;
 
     if (this.isServe && !this.serveBounced) {
-      ui.toast('Deja botar el saque', 900);
+      this.emitToast('Deja botar el saque', 900);
       return;
     }
 
@@ -480,7 +503,7 @@ export class MatchMode {
       this.lastPlayerTiming = timing;
       if (quality > 0.7) {
         this.goodRun++;
-        if (this.goodRun === 3) ui.toast('🔥 ¡En racha!', 900);
+        if (this.goodRun === 3) this.emitToast('🔥 ¡En racha!', 900);
         ui.setFire(this.goodRun);
       } else {
         this.goodRun = 0;
@@ -652,7 +675,7 @@ export class MatchMode {
       } else if (this.isDuel) {
         this.preServeIdle += dt;
         if (this.preServeIdle > 12) {
-          ui.toast('Saque automático por inactividad', 1200);
+          this.emitToast('Saque automático por inactividad', 1200);
           this.doServe(0);
         }
       }

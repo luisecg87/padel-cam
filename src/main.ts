@@ -310,19 +310,6 @@ function startOnlineMatch(session: OnlineSession): void {
     onlineDropped();
   };
 
-  // Interceptar los toasts para retransmitirlos al invitado
-  let toastN = 0;
-  let lastToast = '';
-  const origToast = ui.toast.bind(ui);
-  ui.toast = (text: string, ms?: number) => {
-    toastN++;
-    lastToast = text;
-    origToast(text, ms);
-  };
-  const scoreGamesEl = document.querySelector('#scoreGames')!;
-  const scorePointsEl = document.querySelector('#scorePoints')!;
-  const serveInfoEl = document.querySelector('#serveInfo')!;
-
   const match = new MatchMode({
     renderer,
     control: currentControl,
@@ -369,26 +356,14 @@ function startOnlineMatch(session: OnlineSession): void {
 
   const broadcast = window.setInterval(() => {
     if (!session.connected) return;
-    const st = match.netState();
     session.send({
       t: 'st',
-      b: st.b,
-      p: st.p,
-      c: st.c,
-      hud: {
-        games: scoreGamesEl.textContent ?? '',
-        points: scorePointsEl.textContent ?? '',
-        serve: serveInfoEl.textContent ?? '',
-        toast: lastToast,
-        toastN,
-        replay: st.replay,
-      },
+      ...match.netState(),
     });
   }, 40);
 
   function cleanup(): void {
     window.clearInterval(broadcast);
-    ui.toast = origToast;
   }
 
   currentMode = match;
