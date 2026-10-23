@@ -8,7 +8,6 @@ import { analyzeMatch } from './analysis/coach';
 import {
   addTrophy,
   addXp,
-  calculateOverallConsistency,
   clearSessions,
   getXp,
   loadChallengeRecords,
@@ -64,6 +63,7 @@ let currentControl: ControlAdapter | null = null;
 let currentOnline: OnlineSession | null = null;
 let currentGuest: GuestMatchView | null = null;
 let lastModeWasMatch = true;
+let lastTrainingWasExpress = false;
 let tracker: PoseTracker | null = null;
 
 // ---- Fondo animado del menú: pista vacía ----
@@ -484,7 +484,7 @@ async function startChallenge(id: ChallengeId): Promise<void> {
   challenge.start();
 }
 
-// ---- Entrenamiento técnico con cámara ----
+// ---- Entrenamiento técnico con cámara y Calentamiento Express (3 min) ----
 
 function drillToShot(d: DrillType): ShotType {
   if (d === 'mixto') return 'forehand';
@@ -492,9 +492,10 @@ function drillToShot(d: DrillType): ShotType {
   return d;
 }
 
-async function startTraining(overrideShot?: ShotType): Promise<void> {
+async function startTraining(overrideShot?: ShotType, express = false): Promise<void> {
   stopIdle();
   void wakeLock.acquire();
+  lastTrainingWasExpress = express;
   ui.show('calib');
   ui.setCalibStatus('Iniciando cámara y análisis de pose…', 'wait');
   if (!tracker) tracker = new PoseTracker(video);
@@ -518,17 +519,25 @@ async function startTraining(overrideShot?: ShotType): Promise<void> {
     canvas: trainCanvas,
     tracker,
     shot,
+    express,
     onFinish: (summary: TrainingSummary) => {
       currentTraining = null;
+      const beforeSummary = summarize(loadSessions());
+      const ratingBefore = beforeSummary.padelRating.rating;
+
       const timingTxt =
         summary.meanDtMs === null ? '—' : `${summary.meanDtMs > 0 ? '+' : ''}${summary.meanDtMs} ms`;
+      const sessionTitle = summary.express
+        ? 'Calentamiento Express (3 min)'
+        : `Técnica · ${SHOT_NAMES[shot]}`;
       saveSession({
         date: Date.now(),
         mode: 'practice',
-        title: `Técnica · ${SHOT_NAMES[shot]}`,
-        shot,
+        title: sessionTitle,
+        shot: summary.shot,
         consistency: summary.consistency,
         biomechanics: summary.biomechanics,
+        pillars: summary.pillars,
         stats: [
           { lbl: 'Consistencia', val: `${summary.consistency}%` },
           { lbl: 'Correctos', val: `${summary.correct} / ${summary.reps.length}` },
@@ -542,10 +551,21 @@ async function startTraining(overrideShot?: ShotType): Promise<void> {
           { warn: false, text: summary.recommendation },
         ],
       });
-      const overallConsistency = calculateOverallConsistency(loadSessions());
-      const xpT = addXp(summary.consistency);
+      const xpGained = summary.express ? Math.round(summary.consistency * 1.25) : summary.consistency;
+      const xpT = addXp(xpGained);
       if (xpT.leveledUp) sfx.cheer(true);
-      ui.showTrainingSummary(summary, summary.consistency, overallConsistency);
+
+      const afterSummary = summarize(loadSessions());
+      const ratingDelta = Math.round((afterSummary.padelRating.rating - ratingBefore) * 100) / 100;
+
+      ui.showTrainingSummary(
+        summary,
+        xpGained,
+        afterSummary.overallConsistency,
+        afterSummary.padelRating,
+        ratingDelta,
+        afterSummary.streakDays,
+      );
     },
     onQuit: () => {
       currentTraining = null;
@@ -586,11 +606,12 @@ ui.onTourneyQuit = backToMenu;
 ui.onOnlineHost = () => void hostOnline();
 ui.onOnlineJoin = (code) => void joinOnline(code);
 ui.onOnlineBack = backToMenu;
-ui.onStartTraining = () => void startTraining();
-ui.onTrainAgain = () => void startTraining();
+ui.onStartExpressWarmup = () => void startTraining('forehand', true);
+ui.onStartTraining = () => void startTraining(undefined, false);
+ui.onTrainAgain = () => void startTraining(undefined, lastTrainingWasExpress);
 ui.onTrainRecommended = (shot, drill) => {
   ui.selectDrill(drill);
-  void startTraining(shot);
+  void startTraining(shot, false);
 };
 ui.onShowChallenges = () => ui.showChallenges(CHALLENGES, loadChallengeRecords());
 ui.onPlayChallenge = (id) => void startChallenge(id as ChallengeId);

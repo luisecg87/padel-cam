@@ -3,7 +3,11 @@ import type { DetectedSwing } from '../camera/swingDetector';
 import type { PoseFrame } from '../camera/pose';
 import { sfx } from '../audio/sfx';
 import { BIOMECHANIC_LABELS, SHOT_DRILL } from '../analysis/progress';
-import type { BiomechanicKey, BiomechanicsBreakdown } from '../analysis/progress';
+import type {
+  BiomechanicKey,
+  BiomechanicPillars,
+  BiomechanicsBreakdown,
+} from '../analysis/progress';
 import {
   impactZone,
   readBody,
@@ -25,11 +29,44 @@ export type { DetectedSwing };
 export type Phase = 'searching' | 'announce' | 'prep' | 'strike' | 'result' | 'done';
 
 export const REPS_PER_SESSION = 10;
+
+/**
+ * Secuencia combinada de "Calentamiento Express (3 min)" (12 repeticiones rápidas):
+ * 3 derechas, 3 reveses, 3 voleas, 3 bandejas.
+ */
+export const EXPRESS_WARMUP_SEQUENCE: readonly ShotType[] = [
+  'forehand',
+  'forehand',
+  'forehand',
+  'backhand',
+  'backhand',
+  'backhand',
+  'volleyFh',
+  'volleyFh',
+  'volleyFh',
+  'bandeja',
+  'bandeja',
+  'bandeja',
+] as const;
+
+export const EXPRESS_REPS_PER_SESSION = EXPRESS_WARMUP_SEQUENCE.length;
+
+/** Locuciones de transición del VoiceCoach cuando cambia el golpe en el Calentamiento Express. */
+const EXPRESS_TRANSITION_VOICE: Readonly<Record<number, string>> = {
+  0: '¡Calentamiento express! Empezamos con derecha.',
+  3: '¡Cambio a revés!',
+  6: '¡Subimos a la volea!',
+  9: '¡Atento al globo, bandeja!',
+};
+
 const T_ANNOUNCE = 0.9;
+const T_ANNOUNCE_TRANSITION = 1.45; // margen extra cuando el VoiceCoach anuncia cambio de golpe
 const T_PREP = 1.7;
+const T_PREP_EXPRESS = 1.45;
 const T_RING = 1.0; // el anillo converge; al llegar a 0 suena el beat
 const T_AFTER = 0.45; // margen tras el beat para aceptar el golpe
 const T_RESULT = 1.25;
+const T_RESULT_EXPRESS = 1.15;
 
 /** Margen (ms) para que termine el efecto de sonido (good/bad ~240ms) antes de hablar. */
 const SFX_VOICE_DELAY_MS = 260;
@@ -38,6 +75,7 @@ export type FailCause = 'early' | 'late' | 'noswing' | 'zone' | 'form' | null;
 type PostureFault = 'knees' | 'stance' | 'balance' | null;
 
 export interface RepResult {
+  shot: ShotType;
   swung: boolean;
   dtMs: number | null; // golpe respecto al beat (negativo = pronto)
   zoneDistBw: number | null; // distancia muñeca→zona de impacto (anchos de cuerpo)
@@ -73,6 +111,8 @@ export interface CoachDiagnosisCard {
 
 export interface TrainingSummary {
   shot: ShotType;
+  /** True si la sesión fue un Calentamiento Express combinado de 12 repeticiones. */
+  express: boolean;
   reps: RepResult[];
   correct: number;
   consistency: number; // media de score 0..100
@@ -82,6 +122,8 @@ export interface TrainingSummary {
   avgPower: number;
   /** Desglose de fallos por tipo de biomecánica (rodillas, armado, separación de pies, timing). */
   biomechanics: BiomechanicsBreakdown;
+  /** Porcentajes de éxito (0..100) en los 4 pilares biomecánicos para la Ficha Técnica. */
+  pillars: BiomechanicPillars;
   dominantFault: BiomechanicKey | null;
   coachCard: CoachDiagnosisCard;
   mainIssue: { text: string; tipId: string } | null;
@@ -149,6 +191,8 @@ class VoiceCoach {
 
 export class TrainingSession {
   shot: ShotType;
+  readonly express: boolean;
+  readonly totalReps: number;
   phase: Phase = 'searching';
   repIndex = 0; // 0-based; repIndex+1 se muestra
   reps: RepResult[] = [];
@@ -179,15 +223,33 @@ export class TrainingSession {
   private stanceBadSeen = false;
   private postureBadSeen = false;
   private postureFault: PostureFault = null;
+  private announcedRepIndex = -1;
   lastPower = 0;
 
-  constructor(shot: ShotType) {
-    this.shot = shot;
+  constructor(shot: ShotType, express = false) {
+    this.express = express;
+    this.totalReps = express ? EXPRESS_REPS_PER_SESSION : REPS_PER_SESSION;
+    this.shot = express ? EXPRESS_WARMUP_SEQUENCE[0] : shot;
   }
 
   /** Cancela locuciones pendientes o en curso (llamar al cerrar la vista de entrenamiento). */
   stopSpeech(): void {
     this.voice.cancel();
+  }
+
+  private get prepDuration(): number {
+    return this.express ? T_PREP_EXPRESS : T_PREP;
+  }
+
+  private get announceDuration(): number {
+    if (this.express && EXPRESS_TRANSITION_VOICE[this.repIndex] !== undefined) {
+      return T_ANNOUNCE_TRANSITION;
+    }
+    return T_ANNOUNCE;
+  }
+
+  private get resultDuration(): number {
+    return this.express ? T_RESULT_EXPRESS : T_RESULT;
   }
 
   private get beatTime(): number {
@@ -207,6 +269,9 @@ export class TrainingSession {
 
   update(frame: PoseFrame | null, now: number): void {
     const t = now / 1000;
+    if (this.express && this.repIndex < EXPRESS_WARMUP_SEQUENCE.length) {
+      this.shot = EXPRESS_WARMUP_SEQUENCE[this.repIndex];
+    }
     this.body = readBody(frame, this.shot, this.neutralBw > 0.05 ? this.neutralBw : undefined);
 
     if (this.phase === 'done') return;
@@ -255,7 +320,7 @@ export class TrainingSession {
         break;
 
       case 'announce':
-        if (t - this.phaseStart > T_ANNOUNCE) {
+        if (t - this.phaseStart > this.announceDuration) {
           this.prepSeen = false;
           this.shoulderTurnSeen = !requiresShoulderTurn(this.shot);
           this.guideHandSeen = !requiresGuideHand(this.shot);
@@ -275,7 +340,7 @@ export class TrainingSession {
         if (this.body.shoulderTurned) this.shoulderTurnSeen = true;
         if (this.body.guideHandUp) this.guideHandSeen = true;
         this.recordPosture(this.body);
-        if (t - this.phaseStart > T_PREP) this.setPhase('strike', t);
+        if (t - this.phaseStart > this.prepDuration) this.setPhase('strike', t);
         break;
 
       case 'strike': {
@@ -299,12 +364,15 @@ export class TrainingSession {
       }
 
       case 'result':
-        if (t - this.phaseStart > T_RESULT) {
+        if (t - this.phaseStart > this.resultDuration) {
           this.repIndex++;
-          if (this.repIndex >= REPS_PER_SESSION) {
+          if (this.repIndex >= this.totalReps) {
             this.phase = 'done';
             this.onFinish?.(this.buildSummary());
           } else {
+            if (this.express) {
+              this.shot = EXPRESS_WARMUP_SEQUENCE[this.repIndex];
+            }
             this.setPhase('announce', t);
           }
         }
@@ -315,6 +383,13 @@ export class TrainingSession {
   private setPhase(p: Phase, t: number): void {
     this.phase = p;
     this.phaseStart = t;
+    if (p === 'announce' && this.express && this.announcedRepIndex !== this.repIndex) {
+      const cue = EXPRESS_TRANSITION_VOICE[this.repIndex];
+      if (cue) {
+        this.announcedRepIndex = this.repIndex;
+        this.voice.speak(cue, 50);
+      }
+    }
     if (p === 'strike') {
       this.ringT = 1;
       this.beatFired = false;
@@ -339,7 +414,9 @@ export class TrainingSession {
 
   /** Momento estimado del beat aunque aún estemos en prep. */
   private beatEstimate(): number {
-    return this.phase === 'strike' ? this.beatTime : this.phaseStart + T_PREP + T_RING;
+    return this.phase === 'strike'
+      ? this.beatTime
+      : this.phaseStart + this.prepDuration + T_RING;
   }
 
   private resolveRep(t: number): void {
@@ -352,6 +429,7 @@ export class TrainingSession {
     let rep: RepResult;
     if (!s) {
       rep = {
+        shot: this.shot,
         swung: false,
         dtMs: null,
         zoneDistBw: null,
@@ -471,6 +549,7 @@ export class TrainingSession {
       }
 
       rep = {
+        shot: this.shot,
         swung: true,
         dtMs,
         zoneDistBw,
@@ -496,9 +575,9 @@ export class TrainingSession {
       this.streak = 0;
     }
     this.onResult?.(rep);
-    // Cuando hubo swing, suena sfx.good() o sfx.bad() (~240 ms); retrasamos la
-    // locución para que no se solape con el efecto de sonido. Si no hubo swing,
-    // no suena efecto de golpe y la voz puede entrar casi de inmediato.
+    // En Calentamiento Express, si la siguiente repetición tiene anuncio de cambio de golpe
+    // (reps 3, 6, 9), igual damos el feedback inmediato de esta rep durante `result` y al
+    // entrar en `announce` se cantará la transición de golpe.
     if (this.feedback) {
       this.voice.speak(this.feedback.voice, rep.swung ? SFX_VOICE_DELAY_MS : 40);
     }
@@ -523,12 +602,24 @@ export class TrainingSession {
       : null;
     const avgPower = swung.length ? swung.reduce((a, r) => a + r.power, 0) / swung.length : 0;
 
+    const shoulderTurnFaults = reps.filter((r) => !r.shoulderTurnOk).length;
+
     // 1. Desglose de fallos por tipo de biomecánica (rodillas, armado, separación de pies, timing)
     const biomechanics: BiomechanicsBreakdown = {
       knees: reps.filter((r) => !r.kneesOk).length,
       prep: reps.filter((r) => !r.prepOk).length,
       stance: reps.filter((r) => !r.stanceOk).length,
       timing: reps.filter((r) => !r.timingOk).length,
+      shoulderTurn: shoulderTurnFaults,
+      totalReps,
+    };
+
+    const pct = (faults: number) => clamp(Math.round((1 - faults / totalReps) * 100), 0, 100);
+    const pillars: BiomechanicPillars = {
+      knees: pct(biomechanics.knees),
+      shoulderTurn: pct(shoulderTurnFaults),
+      prep: pct(biomechanics.prep),
+      timing: pct(biomechanics.timing),
     };
 
     const bioKeys: BiomechanicKey[] = ['timing', 'prep', 'knees', 'stance'];
@@ -541,8 +632,29 @@ export class TrainingSession {
       }
     }
 
-    const name = SHOT_NAMES[this.shot];
-    const currentDrill: DrillType = SHOT_DRILL[this.shot] ?? 'forehand';
+    // Si hubo fallo dominante, identificar en qué golpe se concentró más (especialmente útil en express)
+    let focusShot: ShotType = this.express ? 'forehand' : this.shot;
+    if (this.express && dominantFault) {
+      const faultCounts = new Map<ShotType, number>();
+      for (const r of reps) {
+        const failed =
+          (dominantFault === 'knees' && !r.kneesOk) ||
+          (dominantFault === 'prep' && !r.prepOk) ||
+          (dominantFault === 'stance' && !r.stanceOk) ||
+          (dominantFault === 'timing' && !r.timingOk);
+        if (failed) faultCounts.set(r.shot, (faultCounts.get(r.shot) ?? 0) + 1);
+      }
+      let bestCount = 0;
+      for (const [sh, cnt] of faultCounts) {
+        if (cnt > bestCount) {
+          bestCount = cnt;
+          focusShot = sh;
+        }
+      }
+    }
+
+    const name = this.express ? 'Calentamiento Express' : SHOT_NAMES[this.shot];
+    const currentDrill: DrillType = SHOT_DRILL[focusShot] ?? 'forehand';
     const consistency = this.consistency;
 
     const coachCard = this.buildCoachDiagnosisCard(
@@ -552,6 +664,7 @@ export class TrainingSession {
       meanDtMs,
       consistency,
       name,
+      focusShot,
       currentDrill,
     );
 
@@ -573,7 +686,8 @@ export class TrainingSession {
     const recommendation = `${coachCard.exerciseName} — ${coachCard.exerciseReason}`;
 
     return {
-      shot: this.shot,
+      shot: focusShot,
+      express: this.express,
       reps,
       correct,
       consistency,
@@ -582,6 +696,7 @@ export class TrainingSession {
       bestStreak: this.bestStreak,
       avgPower,
       biomechanics,
+      pillars,
       dominantFault,
       coachCard,
       mainIssue,
@@ -595,16 +710,19 @@ export class TrainingSession {
     totalReps: number,
     meanDtMs: number | null,
     consistency: number,
-    shotName: string,
+    sessionLabel: string,
+    targetShot: ShotType,
     currentDrill: DrillType,
   ): CoachDiagnosisCard {
+    const targetShotName = SHOT_NAMES[targetShot];
     if (!dominantFault || biomechanics[dominantFault] === 0) {
-      const nextShot: ShotType = this.shot === 'forehand' ? 'backhand' : this.shot === 'backhand' ? 'bandeja' : 'vibora';
+      const nextShot: ShotType =
+        targetShot === 'forehand' ? 'backhand' : targetShot === 'backhand' ? 'bandeja' : 'vibora';
       const nextDrill: DrillType = SHOT_DRILL[nextShot] ?? 'mixto';
       return {
         dominantFault: null,
         badgeText: 'BIOMECÁNICA IMPECABLE',
-        diagnosis: `Has mantenido una postura sólida, buen perfilado de hombros y sincronización en tus repeticiones de ${shotName} (${consistency}% de consistencia).`,
+        diagnosis: `Has mantenido una postura sólida, buen perfilado de hombros y sincronización en ${sessionLabel} (${consistency}% de consistencia).`,
         exerciseName: `Siguiente reto: Técnica de ${SHOT_NAMES[nextShot]}`,
         exerciseReason: `Transfiere esta calidad de apoyos y lectura de bola a tu ${SHOT_NAMES[nextShot]}.`,
         targetShot: nextShot,
@@ -619,34 +737,34 @@ export class TrainingSession {
           dominantFault: 'knees',
           badgeText: `FALLO DOMINANTE · RODILLAS (${n}/${totalReps})`,
           diagnosis: `Mantuviste las piernas demasiado rígidas en ${n} de ${totalReps} repeticiones. Sin flexión de rodillas pierdes transferencia de peso y control de altura.`,
-          exerciseName: `Repetir ${shotName} con centro de gravedad bajo`,
-          exerciseReason: `Vuelve a lanzar la serie de ${shotName} flexionando las rodillas desde el aviso de preparación antes de cada impacto.`,
-          targetShot: this.shot,
+          exerciseName: `Repetir ${targetShotName} con centro de gravedad bajo`,
+          exerciseReason: `Lanza una serie específica de ${targetShotName} flexionando las rodillas desde el aviso de preparación antes de cada impacto.`,
+          targetShot,
           targetDrill: currentDrill,
         };
 
       case 'prep': {
         const turnFaults = this.reps.filter((r) => !r.shoulderTurnOk).length;
         const guideFaults = this.reps.filter((r) => !r.guideHandOk).length;
-        if (guideFaults >= turnFaults && guideFaults > 0 && requiresGuideHand(this.shot)) {
+        if (guideFaults >= turnFaults && guideFaults > 0 && requiresGuideHand(targetShot)) {
           return {
             dominantFault: 'prep',
             badgeText: `FALLO DOMINANTE · MANO GUÍA (${guideFaults}/${totalReps})`,
             diagnosis: `Dejaste caer la mano no dominante en ${guideFaults} de ${totalReps} repeticiones aéreas. Levantar la mano libre equilibra los hombros y apunta la bola.`,
-            exerciseName: `Serie de ${shotName} apuntando con mano guía`,
-            exerciseReason: `Repite ${shotName} elevando la mano libre al anillo superior antes de armar el golpe.`,
-            targetShot: this.shot,
+            exerciseName: `Serie de ${targetShotName} apuntando con mano guía`,
+            exerciseReason: `Repite ${targetShotName} elevando la mano libre al anillo superior antes de armar el golpe.`,
+            targetShot,
             targetDrill: currentDrill,
           };
         }
-        if (turnFaults > 0 && requiresShoulderTurn(this.shot)) {
+        if (turnFaults > 0 && requiresShoulderTurn(targetShot)) {
           return {
             dominantFault: 'prep',
             badgeText: `FALLO DOMINANTE · PERFILADO (${turnFaults}/${totalReps})`,
             diagnosis: `Golpeaste con el pecho de frente en ${turnFaults} de ${totalReps} repeticiones. En pádel es clave girar los hombros y ponerse de lado en la preparación.`,
-            exerciseName: `Serie de perfilado lateral en ${shotName}`,
-            exerciseReason: `Repite ${shotName} girando el tronco de lado hasta que la silueta de armado se ilumine en verde/cian.`,
-            targetShot: this.shot,
+            exerciseName: `Serie de perfilado lateral en ${targetShotName}`,
+            exerciseReason: `Repite ${targetShotName} girando el tronco de lado hasta que la silueta de armado se ilumine en verde/cian.`,
+            targetShot,
             targetDrill: currentDrill,
           };
         }
@@ -654,9 +772,9 @@ export class TrainingSession {
           dominantFault: 'prep',
           badgeText: `FALLO DOMINANTE · ARMADO (${n}/${totalReps})`,
           diagnosis: `No armaste la pala a tiempo en ${n} de ${totalReps} repeticiones. Preparar tarde te obliga a dar un latigazo precipitado.`,
-          exerciseName: `Serie de armado temprano en ${shotName}`,
-          exerciseReason: `Repite ${shotName} llevando la mano hacia atrás en cuanto aparezca «PREPARA LA PALA», antes de que empiece a cerrarse el anillo.`,
-          targetShot: this.shot,
+          exerciseName: `Serie de armado temprano en ${targetShotName}`,
+          exerciseReason: `Repite ${targetShotName} llevando la mano hacia atrás en cuanto aparezca «PREPARA LA PALA», antes de que empiece a cerrarse el anillo.`,
+          targetShot,
           targetDrill: currentDrill,
         };
       }
@@ -666,9 +784,9 @@ export class TrainingSession {
           dominantFault: 'stance',
           badgeText: `FALLO DOMINANTE · SEPARACIÓN DE PIES (${n}/${totalReps})`,
           diagnosis: `Jugaste con los pies demasiado juntos en ${n} de ${totalReps} repeticiones, restando equilibrio en el momento del impacto.`,
-          exerciseName: `Serie de estabilidad y base en ${shotName}`,
+          exerciseName: `Serie de estabilidad y base en ${targetShotName}`,
           exerciseReason: `Repite el ejercicio separando los pies un poco más que el ancho de tus hombros durante toda la serie.`,
-          targetShot: this.shot,
+          targetShot,
           targetDrill: currentDrill,
         };
 
@@ -680,11 +798,11 @@ export class TrainingSession {
           diagnosis: isLate
             ? `Tu impacto fue tardío en ${n} de ${totalReps} repeticiones (media ${meanDtMs !== null ? `+${meanDtMs} ms` : 'tarde'}). Dejas que la bola se te eche encima.`
             : `Te precipitaste antes del impacto ideal en ${n} de ${totalReps} repeticiones (media ${meanDtMs !== null ? `${meanDtMs} ms` : 'pronto'}).`,
-          exerciseName: `Sincronización de impacto en ${shotName}`,
+          exerciseName: `Sincronización de impacto en ${targetShotName}`,
           exerciseReason: isLate
-            ? `Repite la sesión de ${shotName} iniciando el avance del brazo justo antes de que la bola virtual entre en el círculo.`
-            : `Repite la sesión de ${shotName} aguantando la pala armada hasta que la bola virtual toque el centro de la zona.`,
-          targetShot: this.shot,
+            ? `Trabaja ${targetShotName} iniciando el avance del brazo justo antes de que la bola virtual entre en el círculo.`
+            : `Trabaja ${targetShotName} aguantando la pala armada hasta que la bola virtual toque el centro de la zona.`,
+          targetShot,
           targetDrill: currentDrill,
         };
       }

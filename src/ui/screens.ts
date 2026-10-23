@@ -1,5 +1,10 @@
 import { sfx } from '../audio/sfx';
-import { BIOMECHANIC_LABELS, summarize } from '../analysis/progress';
+import {
+  BIOMECHANIC_LABELS,
+  calculatePadelRating,
+  formatRatingDelta,
+  summarize,
+} from '../analysis/progress';
 import { RIVALS, ROUND_NAMES, TOURNEY_GAMES } from '../modes/tournament';
 import type { Report } from '../analysis/coach';
 import type {
@@ -7,6 +12,7 @@ import type {
   ChallengeRecord,
   Correction,
   DrillSuggestion,
+  PadelRatingInfo,
   ProgressSummary,
   SavedSession,
   XpInfo,
@@ -15,6 +21,8 @@ import type { ChallengeDef, ChallengeResult } from '../modes/challenges';
 import type { TrainingSummary } from '../training/session';
 import { SHOT_NAMES } from '../types';
 import type { ControlMode, Difficulty, DrillType, ShotType } from '../types';
+import { shareTechnicalCard } from './shareCard';
+import type { ShareCardData } from './shareCard';
 
 export interface MenuSettings {
   control: ControlMode;
@@ -62,6 +70,7 @@ class UI {
   onOnlineJoin: ((code: string) => void) | null = null;
   onOnlineBack: (() => void) | null = null;
   onStartTraining: (() => void) | null = null;
+  onStartExpressWarmup: (() => void) | null = null;
   onTrainAgain: (() => void) | null = null;
   onTrainRecommended: ((shot: ShotType, drill: DrillType) => void) | null = null;
   onShowChallenges: (() => void) | null = null;
@@ -72,6 +81,8 @@ class UI {
   private shotChipTimer: number | null = null;
   private tourneyPhase: TourneyPhase = 'play';
   private recommendedTarget: { shot: ShotType; drill: DrillType } | null = null;
+  private lastSummaryShareData: ShareCardData | null = null;
+  private lastProgressShareData: ShareCardData | null = null;
 
   init(): void {
     this.wireOptionRow('#controlRow', 'control', 'control');
@@ -107,6 +118,7 @@ class UI {
       else this.setOnlineStatus('Escribe el código de 4 letras de la partida', 'err');
     });
     $('#btnOnlineBack').addEventListener('click', () => this.onOnlineBack?.());
+    $('#btnExpressWarmup').addEventListener('click', () => this.onStartExpressWarmup?.());
     $('#btnTraining').addEventListener('click', () => this.onStartTraining?.());
     $('#btnTrainAgain').addEventListener('click', () => this.onTrainAgain?.());
     $('#btnTrainRecommended').addEventListener('click', () => {
@@ -115,6 +127,12 @@ class UI {
       } else {
         this.onTrainAgain?.();
       }
+    });
+    $('#btnShareSummary').addEventListener('click', () => {
+      if (this.lastSummaryShareData) void this.triggerShareCard(this.lastSummaryShareData);
+    });
+    $('#btnShareProgress').addEventListener('click', () => {
+      if (this.lastProgressShareData) void this.triggerShareCard(this.lastProgressShareData);
     });
     $('#btnTrainMenu').addEventListener('click', () => this.show('menu'));
     $('#btnChallenges').addEventListener('click', () => this.onShowChallenges?.());
@@ -151,6 +169,19 @@ class UI {
       : 'Teclado: flechas o WASD para moverte · ESPACIO golpea (←/→ dirigen). Con globo: ESPACIO = bandeja · ↑+ESPACIO = remate · ←/→+ESPACIO = víbora.';
   }
 
+  private async triggerShareCard(data: ShareCardData): Promise<void> {
+    try {
+      const res = await shareTechnicalCard(data);
+      if (res === 'downloaded') {
+        this.toast('📥 Ficha Técnica descargada en PNG (1080×1350)', 2400);
+      } else if (res === 'shared') {
+        this.toast('✅ Ficha Técnica compartida', 2000);
+      }
+    } catch {
+      this.toast('⚠️ No se pudo compartir la Ficha Técnica', 2200);
+    }
+  }
+
   private wireOptionRow(rowSel: string, dataKey: string, settingKey: keyof MenuSettings): void {
     const row = $(rowSel);
     row.querySelectorAll<HTMLButtonElement>('.opt').forEach((btn) => {
@@ -177,7 +208,7 @@ class UI {
       .forEach((b) => b.classList.toggle('selected', b.dataset.drill === drill));
   }
 
-  /** Tarjeta "entrenamiento del día" del menú: racha + consistencia acumulada + drill sugerido. */
+  /** Tarjeta del menú: Padel Rating prominente + racha + consistencia acumulada + drill sugerido. */
   setCoach(
     summary: ProgressSummary,
     suggestion: DrillSuggestion | null,
@@ -185,19 +216,20 @@ class UI {
     xp: XpInfo | null = null,
   ): void {
     const card = $('#coachCard');
-    if (summary.totalSessions === 0 && (!xp || xp.xp === 0)) {
-      card.hidden = true;
-      return;
-    }
     card.hidden = false;
+
+    const ratingInfo = xp ? calculatePadelRating(summary, xp) : summary.padelRating;
+    $('#coachPadelRating').textContent = `NIVEL ${ratingInfo.formatted}`;
+    $('#coachPadelCategory').textContent = ratingInfo.category;
+
     if (xp && xp.xp > 0) {
       const consTxt =
         summary.overallConsistency > 0 ? ` · Consistencia técnica: ${summary.overallConsistency}/100` : '';
-      $('#coachLevel').textContent = `Nivel ${xp.level} · ${xp.title}${consTxt}`;
+      $('#coachLevel').textContent = `XP Nivel ${xp.level} · ${xp.title}${consTxt}`;
       $('#coachXpFill').style.width = `${Math.round((xp.levelXp / xp.levelSize) * 100)}%`;
       ($('#coachXpBar') as HTMLElement).style.display = 'block';
     } else {
-      $('#coachLevel').textContent = '';
+      $('#coachLevel').textContent = 'Completa tu Calentamiento Express o sesión técnica para subir tu Padel Rating';
       ($('#coachXpBar') as HTMLElement).style.display = 'none';
     }
     const fire = summary.streakDays >= 3 ? '🔥🔥' : '🔥';
@@ -214,7 +246,7 @@ class UI {
       tip.textContent = `🧑‍🏫 ${suggestion.reason}`;
       btn.hidden = false;
     } else {
-      tip.textContent = '🧑‍🏫 Sin correcciones pendientes: ¡a por un partido!';
+      tip.textContent = '🧑‍🏫 Lanza el Calentamiento Express (3 min) o un partido para evaluar tu nivel.';
       btn.hidden = true;
     }
   }
@@ -388,15 +420,41 @@ class UI {
     this.show('challengeEnd');
   }
 
-  /** TrainingSessionSummary: resumen visual de la sesión de técnica con desglose biomecánico y Diagnóstico del Coach. */
-  showTrainingSummary(s: TrainingSummary, xpGained = 0, overallConsistency?: number): void {
+  /** TrainingSessionSummary: resumen visual de la sesión con Padel Rating, desglose biomecánico, Diagnóstico del Coach y Ficha Técnica. */
+  showTrainingSummary(
+    s: TrainingSummary,
+    xpGained = 0,
+    overallConsistency?: number,
+    padelRating?: PadelRatingInfo,
+    ratingDelta = 0,
+    streakDays = 1,
+  ): void {
+    const titleLabel = s.express ? 'CALENTAMIENTO EXPRESS' : SHOT_NAMES[s.shot].toUpperCase();
     $('#tsShot').textContent =
-      `SESIÓN · ${SHOT_NAMES[s.shot].toUpperCase()}` + (xpGained > 0 ? ` · +${xpGained} XP` : '');
+      `SESIÓN · ${titleLabel}` + (xpGained > 0 ? ` · +${xpGained} XP` : '');
     $('#tsReps').textContent = `${s.reps.length}`;
     $('#tsCorrect').textContent = `${s.correct}`;
     $('#tsStreak').textContent = `${s.bestStreak}`;
     $('#tsTiming').textContent =
       s.meanDtMs === null ? '—' : `${s.meanDtMs > 0 ? '+' : ''}${s.meanDtMs} ms`;
+
+    // Padel Rating y su variación tras la sesión (ej. +0.08 ▲)
+    const pRating: PadelRatingInfo =
+      padelRating ??
+      calculatePadelRating({
+        totalSessions: 1,
+        streakDays,
+        overallConsistency: overallConsistency ?? s.consistency,
+        biomechanics: s.biomechanics,
+        pillars: s.pillars,
+      });
+    $('#tsPadelRating').textContent = `NIVEL ${pRating.formatted}`;
+    $('#tsPadelCat').textContent = pRating.category;
+
+    const deltaInfo = formatRatingDelta(ratingDelta);
+    const deltaEl = $('#tsPadelDelta');
+    deltaEl.textContent = deltaInfo.text;
+    deltaEl.className = `ts-rating-delta ${deltaInfo.dir}`;
 
     // Puntuación de consistencia técnica general acumulada en el historial (0..100)
     const overall = overallConsistency ?? s.consistency;
@@ -445,6 +503,19 @@ class UI {
 
     this.recommendedTarget = { shot: cc.targetShot, drill: cc.targetDrill };
     ($('#btnTrainRecommended') as HTMLButtonElement).textContent = `🎯 ${cc.exerciseName}`;
+
+    // Preparar datos de la Ficha Técnica Compartible para esta sesión
+    this.lastSummaryShareData = {
+      padelRating: pRating,
+      ratingDelta,
+      streakDays: Math.max(1, streakDays),
+      consistency: s.consistency,
+      sessionTitle: titleLabel,
+      pillars: s.pillars,
+      coachBadge: cc.badgeText,
+      coachDiagnosis: cc.diagnosis,
+      coachExercise: cc.exerciseName,
+    };
 
     // Tarjetas adicionales si hay nota de seguimiento
     const cards: string[] = [];
@@ -534,6 +605,13 @@ class UI {
 
   showProgress(sessions: SavedSession[], corrections: Correction[], trophies = 0): void {
     const summary = summarize(sessions);
+    const pRating = summary.padelRating;
+    $('#progressPadelRating').textContent = `NIVEL ${pRating.formatted}`;
+    $('#progressPadelCat').textContent = pRating.category;
+    $('#progressStreakBadge').textContent = `🔥 ${summary.streakDays} ${
+      summary.streakDays === 1 ? 'día' : 'días'
+    }`;
+
     const metaParts: string[] = [];
     if (trophies > 0) metaParts.push(`🏆 Torneos ganados: ${trophies}`);
     if (summary.overallConsistency > 0) {
@@ -543,6 +621,26 @@ class UI {
       metaParts.push(`🎯 Foco biomecánico: ${BIOMECHANIC_LABELS[summary.dominantFault]}`);
     }
     $('#progressTrophies').textContent = metaParts.join(' · ');
+
+    // Configurar datos de Ficha Técnica para compartir desde Progreso
+    const topCorrection = corrections[0];
+    this.lastProgressShareData = {
+      padelRating: pRating,
+      ratingDelta: null,
+      streakDays: summary.streakDays,
+      consistency: summary.overallConsistency > 0 ? summary.overallConsistency : 65,
+      sessionTitle: `PERFIL GLOBAL · ${summary.totalSessions} SESIONES`,
+      pillars: summary.pillars,
+      coachBadge: summary.dominantFault
+        ? `FOCO · ${BIOMECHANIC_LABELS[summary.dominantFault].toUpperCase()}`
+        : 'PROGRESIÓN SÓLIDA',
+      coachDiagnosis:
+        topCorrection?.text ??
+        'Has construido una base biomecánica equilibrada. Mantén la racha diaria con el Calentamiento Express para seguir subiendo tu Padel Rating.',
+      coachExercise: summary.dominantFault
+        ? `Reforzar ${BIOMECHANIC_LABELS[summary.dominantFault].toLowerCase()} en entrenamiento técnico`
+        : 'Calentamiento Express (3 min) + Partido vs IA',
+    };
 
     const cEl = $('#progressCorrections');
     if (corrections.length === 0) {

@@ -34,8 +34,15 @@
       <h1>🎾 Pádel Cam</h1>
       <p class="tagline">Juega pádel con tu cuerpo, desde el navegador</p>
 
-      <!-- Entrenamiento del día: nivel + racha + drill sugerido por el coach -->
-      <div id="coachCard" class="coach-card" hidden>
+      <!-- Entrenamiento del día: Padel Rating + nivel + racha + drill sugerido por el coach -->
+      <div id="coachCard" class="coach-card">
+        <div class="coach-rating-row">
+          <div class="coach-rating-main">
+            <span class="coach-rating-kicker">PADEL RATING</span>
+            <span id="coachPadelRating" class="coach-rating-val">NIVEL 1.50</span>
+          </div>
+          <span id="coachPadelCategory" class="coach-rating-cat">Iniciación</span>
+        </div>
         <div id="coachLevel" class="coach-level"></div>
         <div id="coachXpBar" class="coach-xpbar"><div id="coachXpFill"></div></div>
         <div id="coachStreak" class="coach-streak"></div>
@@ -74,6 +81,7 @@
       </div>
 
       <div class="main-buttons">
+        <button class="big neon-express" id="btnExpressWarmup">⚡ Calentamiento Express (3 min)</button>
         <button class="big" id="btnTraining">🎓 Entrenamiento técnico</button>
         <button class="big" id="btnChallenges">🎯 Desafíos</button>
         <button class="big" id="btnMatch">🏆 Partido vs IA</button>
@@ -155,6 +163,17 @@
     <div class="screen" id="trainSummary">
       <p class="ts-kicker" id="tsShot">SESIÓN · DERECHA</p>
       <h2 class="ts-title">Resumen de la sesión</h2>
+
+      <!-- Padel Rating prominente con variación post-sesión (+0.08 ▲) -->
+      <div id="tsRatingBanner" class="ts-rating-banner">
+        <div class="ts-rating-left">
+          <span class="ts-rating-kicker">PADEL RATING</span>
+          <span id="tsPadelRating" class="ts-rating-val">NIVEL 1.50</span>
+          <span id="tsPadelCat" class="ts-rating-cat">Iniciación</span>
+        </div>
+        <span id="tsPadelDelta" class="ts-rating-delta up">+0.00 =</span>
+      </div>
+
       <div id="tsOverallBadge" class="ts-overall-badge"></div>
 
       <div class="ts-hero">
@@ -184,6 +203,7 @@
       <div id="tsInsights" class="ts-insights"></div>
 
       <div class="main-buttons">
+        <button class="big neon-share" id="btnShareSummary">📤 Compartir mi Ficha Técnica</button>
         <button class="big gold" id="btnTrainRecommended">🎯 Entrenar ejercicio recomendado</button>
         <button class="big secondary" id="btnTrainAgain">Repetir misma sesión</button>
         <button class="link" id="btnTrainMenu">Volver al menú</button>
@@ -219,12 +239,21 @@
     <!-- Progreso e informes guardados -->
     <div class="screen" id="progress">
       <h2>📈 Mi progreso</h2>
+      <div id="progressRatingCard" class="ts-rating-banner">
+        <div class="ts-rating-left">
+          <span class="ts-rating-kicker">PADEL RATING ACTUAL</span>
+          <span id="progressPadelRating" class="ts-rating-val">NIVEL 1.50</span>
+          <span id="progressPadelCat" class="ts-rating-cat">Iniciación</span>
+        </div>
+        <span id="progressStreakBadge" class="ts-rating-delta up">🔥 0 días</span>
+      </div>
       <p class="hint" id="progressTrophies"></p>
       <h3>📌 Correcciones a trabajar</h3>
       <div id="progressCorrections" class="progress-list"></div>
       <h3>🗂️ Últimas sesiones</h3>
       <div id="progressSessions" class="progress-list"></div>
       <div class="main-buttons">
+        <button class="big neon-share" id="btnShareProgress">📤 Compartir mi Ficha Técnica</button>
         <button class="big" id="btnProgressBack">Volver al menú</button>
         <button class="link" id="btnProgressClear">Borrar historial</button>
       </div>

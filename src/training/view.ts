@@ -8,7 +8,7 @@ import {
   requiresShoulderTurn,
   worstPostureCue,
 } from './metrics';
-import { REPS_PER_SESSION, TrainingSession } from './session';
+import { TrainingSession } from './session';
 import type { RepResult, TrainingSummary } from './session';
 import { SHOT_NAMES } from '../types';
 import type { ShotType } from '../types';
@@ -36,6 +36,8 @@ export interface TrainingOptions {
   canvas: HTMLCanvasElement;
   tracker: PoseTracker;
   shot: ShotType;
+  /** Si es true, lanza la secuencia de Calentamiento Express (12 reps: 3 derechas, 3 reveses, 3 voleas, 3 bandejas). */
+  express?: boolean;
   onFinish(summary: TrainingSummary): void;
   onQuit(): void;
 }
@@ -66,7 +68,7 @@ export class CameraTrainingView {
   constructor(opts: TrainingOptions) {
     this.opts = opts;
     this.ctx = opts.canvas.getContext('2d')!;
-    this.session = new TrainingSession(opts.shot);
+    this.session = new TrainingSession(opts.shot, !!opts.express);
     this.session.onBeat = () => sfx.click();
     this.session.onResult = (rep) => {
       const now = performance.now();
@@ -102,7 +104,9 @@ export class CameraTrainingView {
     window.addEventListener('resize', this.resize);
     $('#trainHud').classList.add('active');
     this.opts.canvas.style.display = 'block';
-    $('#trainShot').textContent = SHOT_NAMES[this.opts.shot].toUpperCase();
+    $('#trainShot').textContent = this.session.express
+      ? `⚡ ${SHOT_NAMES[this.session.shot].toUpperCase()}`
+      : SHOT_NAMES[this.session.shot].toUpperCase();
     $('#btnTrainQuit').onclick = () => {
       this.stop();
       this.opts.onQuit();
@@ -246,7 +250,8 @@ export class CameraTrainingView {
     const ctx = this.ctx;
     if (!body || s.phase !== 'prep') return;
 
-    const guides = prepGuideTargets(this.opts.shot, body);
+    const currentShot = s.shot;
+    const guides = prepGuideTargets(currentShot, body);
     const sh = this.px(guides.racketShoulder);
     const el = this.px(guides.racketElbow);
     const rt = this.px(guides.racketTarget);
@@ -302,7 +307,7 @@ export class CameraTrainingView {
     ctx.fillText(armLabel, rt.x, rt.y + ringR + 18);
 
     // 3. Golpes aéreos (bandeja/remate): anillo objetivo superior para levantar la mano guía
-    if (requiresGuideHand(this.opts.shot) && guides.guideTarget && guides.guideShoulder) {
+    if (requiresGuideHand(currentShot) && guides.guideTarget && guides.guideShoulder) {
       const gs = this.px(guides.guideShoulder);
       const gt = this.px(guides.guideTarget);
       const guideOk = body.guideHandUp;
@@ -351,7 +356,8 @@ export class CameraTrainingView {
     const ctx = this.ctx;
     if (!body || s.phase === 'searching' || s.phase === 'done') return;
 
-    const zone = impactZone(this.opts.shot, body);
+    const currentShot = s.shot;
+    const zone = impactZone(currentShot, body);
     const c = this.px(zone.c);
     const r = Math.max(zone.r * this.videoRect.w, 26);
 
@@ -384,7 +390,7 @@ export class CameraTrainingView {
     // Zona objetivo: discreta en prep, activa en strike
     const active = s.phase === 'strike';
     const prepReady =
-      body.prepared && body.shoulderTurned && (!requiresGuideHand(this.opts.shot) || body.guideHandUp);
+      body.prepared && body.shoulderTurned && (!requiresGuideHand(currentShot) || body.guideHandUp);
     ctx.setLineDash(active ? [] : [7, 7]);
     ctx.strokeStyle = active
       ? COLOR.good
@@ -509,8 +515,16 @@ export class CameraTrainingView {
   private updateHud(now: number): void {
     const s = this.session;
     const body = s.body;
+    const currentShot = s.shot;
 
-    $('#trainRep').textContent = `${Math.min(s.repIndex + 1, REPS_PER_SESSION)} / ${REPS_PER_SESSION}`;
+    const shotLabel = s.express
+      ? `⚡ ${SHOT_NAMES[currentShot].toUpperCase()}`
+      : SHOT_NAMES[currentShot].toUpperCase();
+    if ($('#trainShot').textContent !== shotLabel) {
+      $('#trainShot').textContent = shotLabel;
+    }
+
+    $('#trainRep').textContent = `${Math.min(s.repIndex + 1, s.totalReps)} / ${s.totalReps}`;
     $('#trainScore').textContent = s.reps.length ? `${s.consistency}%` : '—';
     $('#trainStreak').textContent = `${s.streak}`;
 
@@ -522,19 +536,27 @@ export class CameraTrainingView {
       phaseTxt = 'Colócate frente a la cámara, de la cintura hacia arriba';
       phaseCls = 'warn';
     } else if (s.phase === 'announce') {
-      phaseTxt = `Siguiente: ${SHOT_NAMES[this.opts.shot]}`;
+      if (s.express && s.repIndex % 3 === 0) {
+        if (s.repIndex === 0) phaseTxt = '⚡ Calentamiento Express: 3 Derechas';
+        else if (s.repIndex === 3) phaseTxt = '⚡ ¡Cambio a Revés! (3 reps)';
+        else if (s.repIndex === 6) phaseTxt = '⚡ ¡Subimos a la Volea! (3 reps)';
+        else if (s.repIndex === 9) phaseTxt = '⚡ ¡Atento al globo: Bandeja! (3 reps)';
+        phaseCls = 'warn';
+      } else {
+        phaseTxt = `Siguiente: ${SHOT_NAMES[currentShot]}`;
+      }
     } else if (s.phase === 'prep') {
       const fullPrep =
         !!body &&
         body.prepared &&
         body.shoulderTurned &&
-        (!requiresGuideHand(this.opts.shot) || body.guideHandUp);
+        (!requiresGuideHand(currentShot) || body.guideHandUp);
       if (fullPrep) {
         phaseTxt = '✓ ARMADO LISTO · ESPERA LA BOLA';
         phaseCls = 'good';
       } else if (body && !body.prepared) {
         phaseTxt = 'PREPARA LA PALA';
-      } else if (body && requiresShoulderTurn(this.opts.shot) && !body.shoulderTurned) {
+      } else if (body && requiresShoulderTurn(currentShot) && !body.shoulderTurned) {
         phaseTxt = 'PERFILA LOS HOMBROS (PONTE DE LADO)';
       } else {
         phaseTxt = 'LEVANTA LA MANO LIBRE';
