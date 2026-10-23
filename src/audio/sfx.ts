@@ -51,6 +51,13 @@ class Sfx {
     if (this.master && this.ctx) {
       this.master.gain.setTargetAtTime(m ? 0 : 1, this.ctx.currentTime, 0.02);
     }
+    if (m && typeof window !== 'undefined' && 'speechSynthesis' in window) {
+      try {
+        window.speechSynthesis.cancel();
+      } catch {
+        /* ignorar */
+      }
+    }
   }
 
   private tone(freq: number, dur: number, opts: ToneOpts = {}): void {

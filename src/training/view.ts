@@ -79,6 +79,7 @@ export class CameraTrainingView {
   stop(): void {
     if (!this.running) return;
     this.running = false;
+    this.session.stopSpeech();
     cancelAnimationFrame(this.raf);
     window.removeEventListener('resize', this.resize);
     $('#trainHud').classList.remove('active');

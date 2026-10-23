@@ -1,6 +1,7 @@
 import { WristSwingDetector } from '../camera/swingDetector';
 import type { DetectedSwing } from '../camera/swingDetector';
 import type { PoseFrame } from '../camera/pose';
+import { sfx } from '../audio/sfx';
 import { impactZone, readBody, worstPostureCue } from './metrics';
 import type { BodyState, Level } from './metrics';
 import { clamp, SHOT_NAMES } from '../types';
@@ -22,7 +23,11 @@ const T_RING = 1.0; // el anillo converge; al llegar a 0 suena el beat
 const T_AFTER = 0.45; // margen tras el beat para aceptar el golpe
 const T_RESULT = 1.25;
 
+/** Margen (ms) para que termine el efecto de sonido (good/bad ~240ms) antes de hablar. */
+const SFX_VOICE_DELAY_MS = 260;
+
 export type FailCause = 'early' | 'late' | 'noswing' | 'zone' | 'form' | null;
+type PostureFault = 'knees' | 'stance' | 'balance' | null;
 
 export interface RepResult {
   swung: boolean;
@@ -39,6 +44,8 @@ export interface RepResult {
 export interface Feedback {
   text: string;
   level: Level;
+  /** Frase cantada por el entrenador por voz (Web Speech API). */
+  voice: string;
 }
 
 export interface TrainingSummary {
@@ -52,6 +59,65 @@ export interface TrainingSummary {
   avgPower: number;
   mainIssue: { text: string; tipId: string } | null;
   recommendation: string;
+}
+
+/**
+ * Sintetizador de voz del entrenador usando la Web Speech API nativa.
+ * Evita solaparse con los efectos de sonido esperando a que terminen y
+ * cancelando cualquier locución activa antes del siguiente beat o al salir.
+ */
+class VoiceCoach {
+  private timer: number | null = null;
+  private cachedVoice: SpeechSynthesisVoice | null = null;
+
+  private getSpanishVoice(): SpeechSynthesisVoice | null {
+    if (typeof window === 'undefined' || !('speechSynthesis' in window)) return null;
+    if (this.cachedVoice) return this.cachedVoice;
+    const voices = window.speechSynthesis.getVoices();
+    this.cachedVoice =
+      voices.find((v) => v.lang.toLowerCase().startsWith('es-es')) ??
+      voices.find((v) => v.lang.toLowerCase().startsWith('es')) ??
+      null;
+    return this.cachedVoice;
+  }
+
+  /** Programa una locución tras el margen indicado para no pisar los efectos de sonido. */
+  speak(text: string, delayMs = SFX_VOICE_DELAY_MS): void {
+    this.cancel();
+    if (sfx.muted || typeof window === 'undefined' || !('speechSynthesis' in window)) return;
+    this.timer = window.setTimeout(() => {
+      this.timer = null;
+      if (sfx.muted || !('speechSynthesis' in window)) return;
+      try {
+        window.speechSynthesis.cancel();
+        const utter = new SpeechSynthesisUtterance(text);
+        utter.lang = 'es-ES';
+        const voice = this.getSpanishVoice();
+        if (voice) utter.voice = voice;
+        utter.rate = 1.12;
+        utter.pitch = 1.0;
+        utter.volume = 0.95;
+        window.speechSynthesis.speak(utter);
+      } catch {
+        /* Web Speech API bloqueada o no soportada en este entorno */
+      }
+    }, Math.max(0, delayMs));
+  }
+
+  /** Detiene cualquier locución en curso o programada. */
+  cancel(): void {
+    if (this.timer !== null) {
+      window.clearTimeout(this.timer);
+      this.timer = null;
+    }
+    if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
+      try {
+        window.speechSynthesis.cancel();
+      } catch {
+        /* ignorar */
+      }
+    }
+  }
 }
 
 export class TrainingSession {
@@ -74,19 +140,35 @@ export class TrainingSession {
   private phaseStart = 0;
   private stableFrames = 0;
   private swingDetector = new WristSwingDetector();
+  private voice = new VoiceCoach();
   private capturedSwing: DetectedSwing | null = null;
   private resolveTime: number | null = null; // resolución diferida: deja terminar la extensión
   private maxExt = 0; // máxima distancia muñeca-cadera vista desde la captura
   private prepSeen = false;
   private postureBadSeen = false;
+  private postureFault: PostureFault = null;
   lastPower = 0;
 
   constructor(shot: ShotType) {
     this.shot = shot;
   }
 
+  /** Cancela locuciones pendientes o en curso (llamar al cerrar la vista de entrenamiento). */
+  stopSpeech(): void {
+    this.voice.cancel();
+  }
+
   private get beatTime(): number {
     return this.phaseStart + T_RING;
+  }
+
+  private recordPosture(body: BodyState): void {
+    if (worstPostureCue(body).level === 'bad') {
+      this.postureBadSeen = true;
+      if (body.knees.level === 'bad') this.postureFault = 'knees';
+      else if (body.stance.level === 'bad' && !this.postureFault) this.postureFault = 'stance';
+      else if (body.balance.level === 'bad' && !this.postureFault) this.postureFault = 'balance';
+    }
   }
 
   update(frame: PoseFrame | null, now: number): void {
@@ -132,6 +214,7 @@ export class TrainingSession {
         if (t - this.phaseStart > T_ANNOUNCE) {
           this.prepSeen = false;
           this.postureBadSeen = false;
+          this.postureFault = null;
           this.capturedSwing = null;
           this.resolveTime = null;
           this.maxExt = 0;
@@ -141,15 +224,18 @@ export class TrainingSession {
 
       case 'prep':
         if (this.body.prepared) this.prepSeen = true;
-        if (worstPostureCue(this.body).level === 'bad') this.postureBadSeen = true;
+        this.recordPosture(this.body);
         if (t - this.phaseStart > T_PREP) this.setPhase('strike', t);
         break;
 
       case 'strike': {
         this.ringT = clamp(1 - (t - this.phaseStart) / T_RING, 0, 1);
         if (this.body.prepared) this.prepSeen = true;
+        this.recordPosture(this.body);
         if (!this.beatFired && t >= this.beatTime) {
           this.beatFired = true;
+          // Garantiza que ninguna voz previa suene encima del click del beat
+          this.voice.cancel();
           this.onBeat?.();
         }
         if (this.capturedSwing && this.resolveTime !== null) {
@@ -217,7 +303,11 @@ export class TrainingSession {
         prepOk: this.prepSeen, postureOk: !this.postureBadSeen,
         score: 0, correct: false, cause: 'noswing',
       };
-      this.feedback = { text: 'SIN GOLPE', level: 'bad' };
+      this.feedback = {
+        text: 'SIN GOLPE',
+        level: 'bad',
+        voice: '¡Suelta el brazo al pitido!',
+      };
     } else {
       const dt = s.t - beat;
       const dtMs = Math.round(dt * 1000);
@@ -234,19 +324,73 @@ export class TrainingSession {
       let cause: FailCause = null;
       if (tScore === 10) cause = dt < 0 ? 'early' : 'late';
       else if (zScore === 10) cause = 'zone';
-      else if (fScore < 10) cause = 'form';
+      else if (fScore < 20) cause = 'form';
 
       // Correcta = sin fallo grave y puntuación alta
       const correct = score >= 70 && (cause === null || cause === 'form');
 
-      if (cause === 'early') this.feedback = { text: 'MUY PRONTO', level: 'bad' };
-      else if (cause === 'late') this.feedback = { text: 'TARDE', level: 'bad' };
-      else if (cause === 'zone') {
-        const tooClose = body && s.pos && Math.abs(s.pos.x - body.hipCenter.x) < Math.abs(impactZone(this.shot, body).c.x - body.hipCenter.x);
-        this.feedback = { text: tooClose ? 'EXTIENDE EL BRAZO' : 'IMPACTA MÁS CERCA', level: 'warn' };
-      } else if (cause === 'form') this.feedback = { text: 'PREPARA ANTES LA PALA', level: 'warn' };
-      else if (score >= 90) this.feedback = { text: 'PERFECTO', level: 'good' };
-      else this.feedback = { text: 'BUEN GOLPE', level: 'good' };
+      if (cause === 'early') {
+        this.feedback = {
+          text: 'MUY PRONTO',
+          level: 'bad',
+          voice: '¡Te adelantaste, espera la bola!',
+        };
+      } else if (cause === 'late') {
+        this.feedback = {
+          text: 'TARDE',
+          level: 'bad',
+          voice: '¡Punto de contacto muy retrasado!',
+        };
+      } else if (cause === 'zone') {
+        const tooClose =
+          body &&
+          s.pos &&
+          Math.abs(s.pos.x - body.hipCenter.x) <
+            Math.abs(impactZone(this.shot, body).c.x - body.hipCenter.x);
+        this.feedback = {
+          text: tooClose ? 'EXTIENDE EL BRAZO' : 'IMPACTA MÁS CERCA',
+          level: 'warn',
+          voice: tooClose ? '¡Extiende más el brazo!' : '¡Impacta más cerca del cuerpo!',
+        };
+      } else if (cause === 'form') {
+        if (!this.prepSeen) {
+          this.feedback = {
+            text: 'PREPARA ANTES LA PALA',
+            level: 'warn',
+            voice: '¡Arma la pala antes!',
+          };
+        } else if (this.postureFault === 'stance') {
+          this.feedback = {
+            text: 'SEPARA LOS PIES',
+            level: 'warn',
+            voice: '¡Separa más los pies!',
+          };
+        } else if (this.postureFault === 'balance') {
+          this.feedback = {
+            text: 'CUIDA EL EQUILIBRIO',
+            level: 'warn',
+            voice: '¡Cuida el equilibrio de los hombros!',
+          };
+        } else {
+          this.feedback = {
+            text: 'FLEXIONA LAS RODILLAS',
+            level: 'warn',
+            voice: '¡Flexiona más las rodillas!',
+          };
+        }
+      } else if (score >= 90) {
+        this.feedback = {
+          text: 'PERFECTO',
+          level: 'good',
+          voice: '¡Impacto perfecto!',
+        };
+      } else {
+        this.feedback = {
+          text: 'BUEN GOLPE',
+          level: 'good',
+          voice: '¡Buen impacto!',
+        };
+      }
 
       rep = {
         swung: true, dtMs, zoneDistBw, power: s.power,
@@ -263,6 +407,12 @@ export class TrainingSession {
       this.streak = 0;
     }
     this.onResult?.(rep);
+    // Cuando hubo swing, suena sfx.good() o sfx.bad() (~240 ms); retrasamos la
+    // locución para que no se solape con el efecto de sonido. Si no hubo swing,
+    // no suena efecto de golpe y la voz puede entrar casi de inmediato.
+    if (this.feedback) {
+      this.voice.speak(this.feedback.voice, rep.swung ? SFX_VOICE_DELAY_MS : 40);
+    }
     this.setPhase('result', t);
   }
 
@@ -307,9 +457,9 @@ export class TrainingSession {
         rec: `Haz pasar la mano por el círculo objetivo: es la distancia natural de impacto de ${SHOT_NAMES[this.shot]}. Hazlo lento y exagerado 5 veces y vuelve a la sesión.`,
       },
       form: {
-        text: 'Falta preparación previa al golpe',
+        text: 'Falta preparación o postura previa al golpe',
         tipId: 'preparacion',
-        rec: 'Lleva la pala atrás/arriba ANTES de que se cierre el anillo: la preparación temprana es la mitad del golpe.',
+        rec: 'Flexiona las rodillas y lleva la pala atrás/arriba ANTES de que se cierre el anillo: la preparación temprana es la mitad del golpe.',
       },
       noswing: {
         text: 'Te quedas sin golpear en varias repeticiones',
