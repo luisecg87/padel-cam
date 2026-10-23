@@ -1,27 +1,23 @@
 import { LM, PoseTracker, drawPreview } from './pose';
+import {
+  HISTORY_MS,
+  SWING_COOLDOWN,
+  SWING_MIN_DIST_BW,
+  SWING_SPEED_BW,
+  WristSwingDetector,
+} from './swingDetector';
 import { readBody } from '../training/metrics';
 import type { Level } from '../training/metrics';
 import { clamp } from '../types';
 import type { ControlAdapter, MoveIntent, SwingEvent } from '../ui/input';
+
+export { HISTORY_MS, SWING_COOLDOWN, SWING_MIN_DIST_BW, SWING_SPEED_BW };
 
 export interface CalibrationData {
   neutralHipX: number; // x de las caderas (espejado) en posición neutra
   shoulderWidth: number; // ancho de hombros normalizado, como escala corporal
 }
 
-interface WristSample {
-  t: number; // segundos
-  x: number; // espejado (0 = izquierda del jugador en pantalla)
-  y: number;
-}
-
-// Umbrales relativos al ancho de hombros ("anchos de cuerpo por segundo"):
-// así la sensibilidad es la misma estés cerca o lejos de la cámara.
-// Exportados para que el modo entrenamiento use exactamente la misma detección.
-export const SWING_SPEED_BW = 6.5; // velocidad mínima de la muñeca
-export const SWING_MIN_DIST_BW = 0.55; // recorrido mínimo (evita disparos por ruido)
-export const SWING_COOLDOWN = 0.5; // s entre golpes
-export const HISTORY_MS = 170;
 const LATERAL_RANGE_BW = 3.0; // anchos de cuerpo que cubren media pista
 
 /**
@@ -35,8 +31,7 @@ export class CameraControl implements ControlAdapter {
 
   private courtX = 0; // posición objetivo en pista, suavizada
   private swings: SwingEvent[] = [];
-  private lastSwingT = 0;
-  private history: Record<'L' | 'R', WristSample[]> = { L: [], R: [] };
+  private swingDetector = new WristSwingDetector();
   private lastFrameT = 0;
   private preview: HTMLCanvasElement;
 
@@ -51,7 +46,6 @@ export class CameraControl implements ControlAdapter {
     drawPreview(this.preview, this.tracker.video, frame);
     if (!frame || frame.t === this.lastFrameT) return;
     this.lastFrameT = frame.t;
-    const t = frame.t / 1000;
     const lm = frame.lm;
 
     const vis = (i: number) => (lm[i]?.visibility ?? 0) > 0.4;
@@ -74,55 +68,23 @@ export class CameraControl implements ControlAdapter {
     this.courtX += diff * alpha;
 
     // --- Detección de swings con las muñecas ---
-    for (const hand of ['L', 'R'] as const) {
-      const wi = hand === 'L' ? LM.L_WRIST : LM.R_WRIST;
-      if (!vis(wi)) {
-        this.history[hand] = [];
-        continue;
-      }
-      const w = lm[wi];
-      const sample: WristSample = { t, x: 1 - w.x, y: w.y };
-      const hist = this.history[hand];
-      hist.push(sample);
-      while (hist.length > 0 && t - hist[0].t > HISTORY_MS / 1000) hist.shift();
-      if (hist.length < 3) continue;
-
-      const first = hist[0];
-      const dtw = sample.t - first.t;
-      if (dtw < 0.06) continue;
-      const dx = sample.x - first.x;
-      const dy = sample.y - first.y;
-      // Velocidad y recorrido en "anchos de cuerpo": independiente de la distancia
-      const speedBw = Math.hypot(dx, dy) / dtw / bw;
-      const distBw = Math.hypot(dx, dy) / bw;
-
-      if (
-        speedBw > SWING_SPEED_BW &&
-        distBw > SWING_MIN_DIST_BW &&
-        t - this.lastSwingT > SWING_COOLDOWN
-      ) {
-        this.lastSwingT = t;
-        const shoulderY = (lm[LM.L_SHOULDER].y + lm[LM.R_SHOULDER].y) / 2;
-        // Golpe alto: la muñeca estaba por encima de los hombros y baja con fuerza
-        const overhead = first.y < shoulderY && dy / dtw > 0.4;
-        const vxBw = dx / dtw / bw;
-        const dir: -1 | 0 | 1 = vxBw > 3 ? 1 : vxBw < -3 ? -1 : 0;
-        // Fuerza del gesto: brazo lento arriba = bandeja, latigazo = remate
-        const power = clamp((speedBw - SWING_SPEED_BW) / 9, 0, 1);
-        // Forma técnica en el momento del golpe: alimenta el gameplay
-        const body = readBody(frame, 'forehand');
-        const lvl = (l: Level): number => (l === 'good' ? 1 : l === 'warn' ? 0.7 : 0.4);
-        const form = body
-          ? {
-              posture: (lvl(body.stance.level) + lvl(body.knees.level) + lvl(body.balance.level)) / 3,
-              extension: Math.hypot(sample.x - body.hipCenter.x, sample.y - body.hipCenter.y) / bw,
-            }
-          : { posture: 0.75, extension: null };
-        this.swings.push({ dir, overhead, power, form });
-        this.history.L = [];
-        this.history.R = [];
-        break;
-      }
+    const detected = this.swingDetector.detect(frame, bw);
+    if (detected) {
+      // Forma técnica en el momento del golpe: alimenta el gameplay
+      const body = readBody(frame, 'forehand');
+      const lvl = (l: Level): number => (l === 'good' ? 1 : l === 'warn' ? 0.7 : 0.4);
+      const form = body
+        ? {
+            posture: (lvl(body.stance.level) + lvl(body.knees.level) + lvl(body.balance.level)) / 3,
+            extension: Math.hypot(detected.pos.x - body.hipCenter.x, detected.pos.y - body.hipCenter.y) / bw,
+          }
+        : { posture: 0.75, extension: null };
+      this.swings.push({
+        dir: detected.dir,
+        overhead: detected.overhead,
+        power: detected.power,
+        form,
+      });
     }
   }
 

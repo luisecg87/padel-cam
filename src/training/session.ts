@@ -1,10 +1,12 @@
-import { HISTORY_MS, SWING_COOLDOWN, SWING_MIN_DIST_BW, SWING_SPEED_BW } from '../camera/gestures';
-import { LM } from '../camera/pose';
+import { WristSwingDetector } from '../camera/swingDetector';
+import type { DetectedSwing } from '../camera/swingDetector';
 import type { PoseFrame } from '../camera/pose';
 import { impactZone, readBody, worstPostureCue } from './metrics';
-import type { BodyState, Level, Pt } from './metrics';
+import type { BodyState, Level } from './metrics';
 import { clamp, SHOT_NAMES } from '../types';
 import type { ShotType } from '../types';
+
+export type { DetectedSwing };
 
 // Sesión de entrenamiento técnico por repeticiones ("sombra" con ritmo):
 // el sistema anuncia el golpe, marca la preparación y pita el momento exacto
@@ -52,18 +54,6 @@ export interface TrainingSummary {
   recommendation: string;
 }
 
-interface WristSample {
-  t: number; // s
-  pos: Pt;
-}
-
-export interface DetectedSwing {
-  t: number; // s
-  pos: Pt;
-  power: number; // 0..1
-  overhead: boolean;
-}
-
 export class TrainingSession {
   shot: ShotType;
   phase: Phase = 'searching';
@@ -83,9 +73,7 @@ export class TrainingSession {
 
   private phaseStart = 0;
   private stableFrames = 0;
-  private lastFrameT = 0;
-  private history: Record<'L' | 'R', WristSample[]> = { L: [], R: [] };
-  private lastSwingT = 0;
+  private swingDetector = new WristSwingDetector();
   private capturedSwing: DetectedSwing | null = null;
   private resolveTime: number | null = null; // resolución diferida: deja terminar la extensión
   private maxExt = 0; // máxima distancia muñeca-cadera vista desde la captura
@@ -111,12 +99,15 @@ export class TrainingSession {
     if (!this.body) {
       if (this.phase !== 'searching') this.setPhase('searching', t);
       this.stableFrames = 0;
-      this.history.L = [];
-      this.history.R = [];
+      this.swingDetector.reset();
       return;
     }
 
-    this.detectSwing(frame!, t);
+    const detected = this.swingDetector.detect(frame!, this.body.bw, t);
+    if (detected) {
+      this.lastPower = detected.power;
+      this.onSwing(detected);
+    }
 
     // El punto de impacto real es la máxima extensión de la muñeca tras el
     // swing (la detección dispara al inicio del gesto, no en el impacto).
@@ -191,43 +182,6 @@ export class TrainingSession {
       this.beatFired = false;
     }
     if (p !== 'result') this.feedback = null;
-  }
-
-  /** Misma detección de swing que el juego: velocidad de muñeca en anchos de cuerpo. */
-  private detectSwing(frame: PoseFrame, t: number): void {
-    if (frame.t === this.lastFrameT || !this.body) return;
-    this.lastFrameT = frame.t;
-    const bw = this.body.bw;
-    for (const hand of ['L', 'R'] as const) {
-      const wi = hand === 'L' ? LM.L_WRIST : LM.R_WRIST;
-      const p = frame.lm[wi];
-      if (!p || (p.visibility ?? 0) < 0.4) {
-        this.history[hand] = [];
-        continue;
-      }
-      const sample: WristSample = { t, pos: { x: 1 - p.x, y: p.y } };
-      const hist = this.history[hand];
-      hist.push(sample);
-      while (hist.length > 0 && t - hist[0].t > HISTORY_MS / 1000) hist.shift();
-      if (hist.length < 3) continue;
-      const first = hist[0];
-      const dtw = sample.t - first.t;
-      if (dtw < 0.06) continue;
-      const dx = sample.pos.x - first.pos.x;
-      const dy = sample.pos.y - first.pos.y;
-      const speedBw = Math.hypot(dx, dy) / dtw / bw;
-      const distBw = Math.hypot(dx, dy) / bw;
-      if (speedBw > SWING_SPEED_BW && distBw > SWING_MIN_DIST_BW && t - this.lastSwingT > SWING_COOLDOWN) {
-        this.lastSwingT = t;
-        const overhead = first.pos.y < this.body.shoulderCenter.y && dy / dtw > 0.4;
-        const power = clamp((speedBw - SWING_SPEED_BW) / 9, 0, 1);
-        this.lastPower = power;
-        this.onSwing({ t, pos: sample.pos, power, overhead });
-        this.history.L = [];
-        this.history.R = [];
-        break;
-      }
-    }
   }
 
   private onSwing(s: DetectedSwing): void {
