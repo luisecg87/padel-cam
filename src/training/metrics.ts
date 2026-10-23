@@ -21,9 +21,14 @@ export interface PostureCheck {
   cue: string;
 }
 
+/** Umbral de perfilado: |ls.x - rs.x| se reduce al menos un 22% respecto a bw neutro (<= 0.78). */
+export const SHOULDER_TURN_MAX_RATIO = 0.78;
+
 export interface BodyState {
   visible: boolean;
-  bw: number; // ancho de hombros en unidades normalizadas
+  bw: number; // ancho de hombros de referencia en unidades normalizadas
+  rawShoulderSpan: number; // distancia horizontal proyectada |ls.x - rs.x| en este frame
+  shoulderSpanRatio: number; // rawShoulderSpan / bw (<= 0.78 = hombros perfilados >= 22%)
   hipCenter: Pt;
   shoulderCenter: Pt;
   nose: Pt;
@@ -32,8 +37,14 @@ export interface BodyState {
   knees: PostureCheck; // flexión de rodillas
   ready: PostureCheck; // manos delante, a media altura
   balance: PostureCheck; // hombros nivelados
+  shoulderTurn: PostureCheck; // giro de hombros (perfilado lateral)
+  guideHand: PostureCheck; // mano libre activa apuntando en golpes aéreos
   /** Preparación del golpe: pala (muñeca) armada hacia el lado del golpe. */
   prepared: boolean;
+  /** Hombros perfilados (>= 22% de reducción de ancho proyectado cuando aplica). */
+  shoulderTurned: boolean;
+  /** Mano no dominante elevada al menos a altura de hombro/pecho en golpes aéreos. */
+  guideHandUp: boolean;
 }
 
 const vis = (f: PoseFrame, i: number): boolean => (f.lm[i]?.visibility ?? 0) > 0.4;
@@ -51,6 +62,22 @@ function angleDeg(a: Pt, b: Pt, c: Pt): number {
 /** Lado del cuerpo donde se golpea cada tipo (en espejo, +1 = derecha del jugador). */
 export function shotSide(shot: ShotType): 1 | -1 {
   return shot === 'backhand' || shot === 'volleyBh' ? -1 : 1;
+}
+
+/** Golpes que exigen perfilar los hombros (ponerse de lado) en la fase de preparación. */
+export function requiresShoulderTurn(shot: ShotType): boolean {
+  return (
+    shot === 'forehand' ||
+    shot === 'backhand' ||
+    shot === 'bandeja' ||
+    shot === 'smash' ||
+    shot === 'vibora'
+  );
+}
+
+/** Golpes aéreos donde la mano no dominante debe elevarse para apuntar y equilibrar. */
+export function requiresGuideHand(shot: ShotType): boolean {
+  return shot === 'bandeja' || shot === 'smash' || shot === 'vibora';
 }
 
 /**
@@ -84,8 +111,62 @@ export function impactZone(shot: ShotType, body: BodyState): { c: Pt; r: number 
   return { c, r: 0.45 * bw };
 }
 
-/** Extrae el estado corporal y las comprobaciones de postura de un frame. */
-export function readBody(frame: PoseFrame | null, shot: ShotType): BodyState | null {
+/**
+ * Posiciones objetivo en espejo durante la fase `prep` para guiar al jugador a 3 metros:
+ * - `racketTarget`: dónde colocar el brazo armado con la pala.
+ * - `guideTarget`: anillo superior para levantar la mano no dominante en golpes aéreos.
+ */
+export function prepGuideTargets(
+  shot: ShotType,
+  body: BodyState,
+): {
+  racketShoulder: Pt;
+  racketElbow: Pt;
+  racketTarget: Pt;
+  guideShoulder: Pt | null;
+  guideTarget: Pt | null;
+} {
+  const bw = body.bw;
+  const sc = body.shoulderCenter;
+  const hc = body.hipCenter;
+  const side = shotSide(shot);
+  const overhead = requiresGuideHand(shot);
+
+  const racketShoulder = { x: sc.x + side * 0.42 * bw, y: sc.y };
+  const racketElbow = overhead
+    ? { x: sc.x + side * 0.72 * bw, y: sc.y - 0.12 * bw }
+    : { x: sc.x + side * 0.68 * bw, y: sc.y + 0.28 * bw };
+  const racketTarget = overhead
+    ? { x: sc.x + side * 0.82 * bw, y: sc.y - 0.52 * bw }
+    : { x: hc.x + side * 0.92 * bw, y: sc.y + 0.36 * bw };
+
+  if (!overhead) {
+    return {
+      racketShoulder,
+      racketElbow,
+      racketTarget,
+      guideShoulder: null,
+      guideTarget: null,
+    };
+  }
+
+  const guideShoulder = { x: sc.x - side * 0.42 * bw, y: sc.y };
+  const guideTarget = { x: sc.x - side * 0.65 * bw, y: sc.y - 0.48 * bw };
+  return {
+    racketShoulder,
+    racketElbow,
+    racketTarget,
+    guideShoulder,
+    guideTarget,
+  };
+}
+
+/** Extrae el estado corporal y las comprobaciones de postura y biomecánica de un frame. */
+export function readBody(
+  frame: PoseFrame | null,
+  shot: ShotType,
+  neutralBw?: number,
+): BodyState | null {
   if (!frame) return null;
   const f = frame;
   if (!vis(f, LM.L_SHOULDER) || !vis(f, LM.R_SHOULDER) || !vis(f, LM.L_HIP) || !vis(f, LM.R_HIP)) {
@@ -95,9 +176,13 @@ export function readBody(frame: PoseFrame | null, shot: ShotType): BodyState | n
   const rs = mir(f, LM.R_SHOULDER);
   const lh = mir(f, LM.L_HIP);
   const rh = mir(f, LM.R_HIP);
-  const bw = Math.max(Math.abs(ls.x - rs.x), 0.05);
+  const rawShoulderSpan = Math.abs(ls.x - rs.x);
+  const bw = Math.max(neutralBw && neutralBw > 0.05 ? neutralBw : rawShoulderSpan, 0.05);
+  const shoulderSpanRatio = rawShoulderSpan / bw;
+
   const hipCenter = { x: (lh.x + rh.x) / 2, y: (lh.y + rh.y) / 2 };
   const shoulderCenter = { x: (ls.x + rs.x) / 2, y: (ls.y + rs.y) / 2 };
+  const chestY = (shoulderCenter.y + hipCenter.y) / 2;
   const nose = vis(f, LM.NOSE) ? mir(f, LM.NOSE) : { x: shoulderCenter.x, y: shoulderCenter.y - bw };
 
   const wL = vis(f, LM.L_WRIST) ? mir(f, LM.L_WRIST) : null;
@@ -144,7 +229,7 @@ export function readBody(frame: PoseFrame | null, shot: ShotType): BodyState | n
 
   // --- Preparación: muñeca armada hacia el lado del golpe (o arriba en golpes altos) ---
   const side = shotSide(shot);
-  const overheadShot = shot === 'smash' || shot === 'bandeja' || shot === 'vibora';
+  const overheadShot = requiresGuideHand(shot);
   let prepared = false;
   for (const w of [wL, wR]) {
     if (!w) continue;
@@ -155,9 +240,36 @@ export function readBody(frame: PoseFrame | null, shot: ShotType): BodyState | n
     }
   }
 
+  // --- Perfilado de hombros (shoulderTurn): reducción >= 22% de |ls.x - rs.x| respecto a bw ---
+  const needsTurn = requiresShoulderTurn(shot);
+  const shoulderTurned = !needsTurn || shoulderSpanRatio <= SHOULDER_TURN_MAX_RATIO;
+  const shoulderTurn: PostureCheck = shoulderTurned
+    ? { level: 'good', cue: '' }
+    : shoulderSpanRatio <= 0.88
+      ? { level: 'warn', cue: 'Gira más los hombros de lado' }
+      : { level: 'bad', cue: 'Perfila los hombros (ponte de lado)' };
+
+  // --- Mano no dominante activa en golpes aéreos (guideHand): elevada al menos a pecho/hombro ---
+  let guideHandUp = true;
+  if (overheadShot) {
+    // En espejo: la mano libre queda en el lado opuesto al armado (-side) o ambas manos arriba.
+    // Comprobamos que la mano no dominante (o ambas muñecas visibles) esté a altura de hombro/pecho (y <= chestY).
+    if (wL && wR) {
+      guideHandUp = wL.y <= chestY && wR.y <= chestY;
+    } else {
+      const w = wL ?? wR;
+      guideHandUp = !!w && w.y <= shoulderCenter.y + 0.15 * bw;
+    }
+  }
+  const guideHand: PostureCheck = guideHandUp
+    ? { level: 'good', cue: '' }
+    : { level: 'bad', cue: 'Levanta la mano libre para apuntar' };
+
   return {
     visible: true,
     bw,
+    rawShoulderSpan,
+    shoulderSpanRatio,
     hipCenter,
     shoulderCenter,
     nose,
@@ -166,7 +278,11 @@ export function readBody(frame: PoseFrame | null, shot: ShotType): BodyState | n
     knees,
     ready,
     balance,
+    shoulderTurn,
+    guideHand,
     prepared,
+    shoulderTurned,
+    guideHandUp,
   };
 }
 

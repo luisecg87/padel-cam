@@ -35,6 +35,7 @@ import { PoseTracker } from './camera/pose';
 import { CameraControl } from './camera/gestures';
 import { runCalibration } from './camera/calibration';
 import { ui } from './ui/screens';
+import { wakeLock } from './ui/wakeLock';
 import { KeyboardTouchControl, SplitKeyboardControl } from './ui/input';
 import type { ControlAdapter } from './ui/input';
 
@@ -96,6 +97,7 @@ function backToMenu(): void {
   currentControl?.destroy();
   currentControl = null;
   tourneyRound = -1;
+  void wakeLock.release();
   ui.setCamPreviewVisible(false);
   ui.setDrillHud(null);
   ui.show('menu');
@@ -103,6 +105,7 @@ function backToMenu(): void {
 }
 
 async function buildControl(): Promise<ControlAdapter | null> {
+  void wakeLock.acquire();
   if (ui.settings.control === 'keyboard') {
     return new KeyboardTouchControl();
   }
@@ -132,6 +135,7 @@ async function buildControl(): Promise<ControlAdapter | null> {
 
 async function startMatch(): Promise<void> {
   stopIdle();
+  void wakeLock.acquire();
   const control = await buildControl();
   if (!control) {
     backToMenu();
@@ -173,6 +177,7 @@ async function startMatch(): Promise<void> {
 
 async function startPractice(): Promise<void> {
   stopIdle();
+  void wakeLock.acquire();
   const control = await buildControl();
   if (!control) {
     backToMenu();
@@ -212,6 +217,7 @@ async function startPractice(): Promise<void> {
 
 async function startTournament(): Promise<void> {
   stopIdle();
+  void wakeLock.acquire();
   const control = await buildControl();
   if (!control) {
     backToMenu();
@@ -225,6 +231,7 @@ async function startTournament(): Promise<void> {
 
 function playTourneyRound(): void {
   if (tourneyRound < 0 || !currentControl) return;
+  void wakeLock.acquire();
   const round = tourneyRound;
   const rival = RIVALS[round];
   ui.show('none');
@@ -277,6 +284,7 @@ function onlineDropped(): void {
 
 async function hostOnline(): Promise<void> {
   stopIdle();
+  void wakeLock.acquire();
   const control = await buildControl();
   ui.show('online');
   startIdle();
@@ -299,6 +307,7 @@ async function hostOnline(): Promise<void> {
 function startOnlineMatch(session: OnlineSession): void {
   if (!currentControl) return;
   stopIdle();
+  void wakeLock.acquire();
   ui.show('none');
   ui.setCamPreviewVisible(ui.settings.control === 'camera');
   lastModeWasMatch = true;
@@ -373,6 +382,7 @@ function startOnlineMatch(session: OnlineSession): void {
 
 async function joinOnline(code: string): Promise<void> {
   stopIdle();
+  void wakeLock.acquire();
   const control = await buildControl();
   ui.show('online');
   startIdle();
@@ -395,6 +405,7 @@ async function joinOnline(code: string): Promise<void> {
 function startGuestView(session: OnlineSession): void {
   if (!currentControl) return;
   stopIdle();
+  void wakeLock.acquire();
   ui.show('none');
   ui.setCamPreviewVisible(ui.settings.control === 'camera');
 
@@ -434,6 +445,7 @@ async function startChallenge(id: ChallengeId): Promise<void> {
   if (!def) return;
   lastChallengeId = id;
   stopIdle();
+  void wakeLock.acquire();
   const control = await buildControl();
   if (!control) {
     backToMenu();
@@ -482,6 +494,7 @@ function drillToShot(d: DrillType): ShotType {
 
 async function startTraining(overrideShot?: ShotType): Promise<void> {
   stopIdle();
+  void wakeLock.acquire();
   ui.show('calib');
   ui.setCalibStatus('Iniciando cámara y análisis de pose…', 'wait');
   if (!tracker) tracker = new PoseTracker(video);
@@ -550,6 +563,7 @@ function showProgress(): void {
 
 let lastSuggestion: ReturnType<typeof suggestDrill> = null;
 function refreshCoachCard(): void {
+  void wakeLock.release();
   const sessions = loadSessions();
   lastSuggestion = suggestDrill(pendingCorrections(sessions));
   ui.setCoach(summarize(sessions), lastSuggestion, loadTrophies(), getXp());

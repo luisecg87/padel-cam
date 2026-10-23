@@ -4,7 +4,13 @@ import type { PoseFrame } from '../camera/pose';
 import { sfx } from '../audio/sfx';
 import { BIOMECHANIC_LABELS, SHOT_DRILL } from '../analysis/progress';
 import type { BiomechanicKey, BiomechanicsBreakdown } from '../analysis/progress';
-import { impactZone, readBody, worstPostureCue } from './metrics';
+import {
+  impactZone,
+  readBody,
+  requiresGuideHand,
+  requiresShoulderTurn,
+  worstPostureCue,
+} from './metrics';
 import type { BodyState, Level } from './metrics';
 import { clamp, SHOT_NAMES } from '../types';
 import type { DrillType, ShotType } from '../types';
@@ -36,7 +42,9 @@ export interface RepResult {
   dtMs: number | null; // golpe respecto al beat (negativo = pronto)
   zoneDistBw: number | null; // distancia muñeca→zona de impacto (anchos de cuerpo)
   power: number; // 0..1
-  prepOk: boolean; // armado temprano de la pala
+  prepOk: boolean; // armado temprano de la pala (incluye perfilado y mano guía si aplican)
+  shoulderTurnOk: boolean; // giro de hombros >= 22%
+  guideHandOk: boolean; // mano libre activa en golpes aéreos
   kneesOk: boolean; // flexión de rodillas adecuada
   stanceOk: boolean; // separación de pies (base estable)
   timingOk: boolean; // sincronización dentro de la ventana de impacto
@@ -49,7 +57,7 @@ export interface RepResult {
 export interface Feedback {
   text: string;
   level: Level;
-  /** Frase cantada por el entrenador por voz (Web Speech API). */
+  /** Frase única cantada por el entrenador por voz (Web Speech API). */
   voice: string;
 }
 
@@ -158,12 +166,15 @@ export class TrainingSession {
 
   private phaseStart = 0;
   private stableFrames = 0;
+  private neutralBw = 0; // ancho de hombros neutro de frente a la cámara
   private swingDetector = new WristSwingDetector();
   private voice = new VoiceCoach();
   private capturedSwing: DetectedSwing | null = null;
   private resolveTime: number | null = null; // resolución diferida: deja terminar la extensión
   private maxExt = 0; // máxima distancia muñeca-cadera vista desde la captura
   private prepSeen = false;
+  private shoulderTurnSeen = false;
+  private guideHandSeen = false;
   private kneesBadSeen = false;
   private stanceBadSeen = false;
   private postureBadSeen = false;
@@ -196,7 +207,7 @@ export class TrainingSession {
 
   update(frame: PoseFrame | null, now: number): void {
     const t = now / 1000;
-    this.body = readBody(frame, this.shot);
+    this.body = readBody(frame, this.shot, this.neutralBw > 0.05 ? this.neutralBw : undefined);
 
     if (this.phase === 'done') return;
 
@@ -206,6 +217,16 @@ export class TrainingSession {
       this.stableFrames = 0;
       this.swingDetector.reset();
       return;
+    }
+
+    // Calibrar el ancho de hombros neutro cuando el jugador está de frente en espera/anuncio
+    if (this.phase === 'searching' || this.phase === 'announce') {
+      if (this.body.rawShoulderSpan > 0.06) {
+        this.neutralBw =
+          this.neutralBw > 0.05
+            ? Math.max(this.neutralBw * 0.92 + this.body.rawShoulderSpan * 0.08, this.body.rawShoulderSpan)
+            : this.body.rawShoulderSpan;
+      }
     }
 
     const detected = this.swingDetector.detect(frame!, this.body.bw, t);
@@ -236,6 +257,8 @@ export class TrainingSession {
       case 'announce':
         if (t - this.phaseStart > T_ANNOUNCE) {
           this.prepSeen = false;
+          this.shoulderTurnSeen = !requiresShoulderTurn(this.shot);
+          this.guideHandSeen = !requiresGuideHand(this.shot);
           this.kneesBadSeen = false;
           this.stanceBadSeen = false;
           this.postureBadSeen = false;
@@ -249,6 +272,8 @@ export class TrainingSession {
 
       case 'prep':
         if (this.body.prepared) this.prepSeen = true;
+        if (this.body.shoulderTurned) this.shoulderTurnSeen = true;
+        if (this.body.guideHandUp) this.guideHandSeen = true;
         this.recordPosture(this.body);
         if (t - this.phaseStart > T_PREP) this.setPhase('strike', t);
         break;
@@ -256,6 +281,8 @@ export class TrainingSession {
       case 'strike': {
         this.ringT = clamp(1 - (t - this.phaseStart) / T_RING, 0, 1);
         if (this.body.prepared) this.prepSeen = true;
+        if (this.body.shoulderTurned) this.shoulderTurnSeen = true;
+        if (this.body.guideHandUp) this.guideHandSeen = true;
         this.recordPosture(this.body);
         if (!this.beatFired && t >= this.beatTime) {
           this.beatFired = true;
@@ -320,6 +347,7 @@ export class TrainingSession {
     const s = this.capturedSwing;
     const beat = this.beatEstimate();
     const body = this.body;
+    const fullPrepOk = this.prepSeen && this.shoulderTurnSeen && this.guideHandSeen;
 
     let rep: RepResult;
     if (!s) {
@@ -328,7 +356,9 @@ export class TrainingSession {
         dtMs: null,
         zoneDistBw: null,
         power: 0,
-        prepOk: this.prepSeen,
+        prepOk: fullPrepOk,
+        shoulderTurnOk: this.shoulderTurnSeen,
+        guideHandOk: this.guideHandSeen,
         kneesOk: !this.kneesBadSeen,
         stanceOk: !this.stanceBadSeen,
         timingOk: false,
@@ -352,7 +382,7 @@ export class TrainingSession {
       }
       const tScore = Math.abs(dt) <= 0.15 ? 40 : Math.abs(dt) <= 0.35 ? 28 : 10;
       const zScore = zoneDistBw === null ? 20 : zoneDistBw <= 0.55 ? 40 : zoneDistBw <= 1.0 ? 26 : 10;
-      const fScore = (this.prepSeen ? 10 : 0) + (this.postureBadSeen ? 0 : 10);
+      const fScore = (fullPrepOk ? 10 : 0) + (this.postureBadSeen ? 0 : 10);
       const score = tScore + zScore + fScore;
 
       let cause: FailCause = null;
@@ -363,6 +393,7 @@ export class TrainingSession {
       // Correcta = sin fallo grave y puntuación alta
       const correct = score >= 70 && (cause === null || cause === 'form');
 
+      // Regla estricta: priorizar SOLO 1 corrección principal por repetición
       if (cause === 'early') {
         this.feedback = {
           text: 'MUY PRONTO',
@@ -392,6 +423,19 @@ export class TrainingSession {
             text: 'PREPARA ANTES LA PALA',
             level: 'warn',
             voice: '¡Arma la pala antes!',
+          };
+        } else if (!this.shoulderTurnSeen) {
+          this.feedback = {
+            text: 'PERFILA LOS HOMBROS',
+            level: 'warn',
+            voice: '¡Gira los hombros y ponte de lado!',
+          };
+        } else if (!this.guideHandSeen) {
+          const shotLbl = this.shot === 'bandeja' ? 'la bandeja' : 'el remate';
+          this.feedback = {
+            text: 'LEVANTA LA MANO LIBRE',
+            level: 'warn',
+            voice: `¡Levanta la mano libre para apuntar ${shotLbl}!`,
           };
         } else if (this.postureFault === 'stance') {
           this.feedback = {
@@ -431,7 +475,9 @@ export class TrainingSession {
         dtMs,
         zoneDistBw,
         power: s.power,
-        prepOk: this.prepSeen,
+        prepOk: fullPrepOk,
+        shoulderTurnOk: this.shoulderTurnSeen,
+        guideHandOk: this.guideHandSeen,
         kneesOk: !this.kneesBadSeen,
         stanceOk: !this.stanceBadSeen,
         timingOk: tScore > 10,
@@ -558,7 +604,7 @@ export class TrainingSession {
       return {
         dominantFault: null,
         badgeText: 'BIOMECÁNICA IMPECABLE',
-        diagnosis: `Has mantenido una postura sólida, buen armado y sincronización en tus repeticiones de ${shotName} (${consistency}% de consistencia).`,
+        diagnosis: `Has mantenido una postura sólida, buen perfilado de hombros y sincronización en tus repeticiones de ${shotName} (${consistency}% de consistencia).`,
         exerciseName: `Siguiente reto: Técnica de ${SHOT_NAMES[nextShot]}`,
         exerciseReason: `Transfiere esta calidad de apoyos y lectura de bola a tu ${SHOT_NAMES[nextShot]}.`,
         targetShot: nextShot,
@@ -579,7 +625,31 @@ export class TrainingSession {
           targetDrill: currentDrill,
         };
 
-      case 'prep':
+      case 'prep': {
+        const turnFaults = this.reps.filter((r) => !r.shoulderTurnOk).length;
+        const guideFaults = this.reps.filter((r) => !r.guideHandOk).length;
+        if (guideFaults >= turnFaults && guideFaults > 0 && requiresGuideHand(this.shot)) {
+          return {
+            dominantFault: 'prep',
+            badgeText: `FALLO DOMINANTE · MANO GUÍA (${guideFaults}/${totalReps})`,
+            diagnosis: `Dejaste caer la mano no dominante en ${guideFaults} de ${totalReps} repeticiones aéreas. Levantar la mano libre equilibra los hombros y apunta la bola.`,
+            exerciseName: `Serie de ${shotName} apuntando con mano guía`,
+            exerciseReason: `Repite ${shotName} elevando la mano libre al anillo superior antes de armar el golpe.`,
+            targetShot: this.shot,
+            targetDrill: currentDrill,
+          };
+        }
+        if (turnFaults > 0 && requiresShoulderTurn(this.shot)) {
+          return {
+            dominantFault: 'prep',
+            badgeText: `FALLO DOMINANTE · PERFILADO (${turnFaults}/${totalReps})`,
+            diagnosis: `Golpeaste con el pecho de frente en ${turnFaults} de ${totalReps} repeticiones. En pádel es clave girar los hombros y ponerse de lado en la preparación.`,
+            exerciseName: `Serie de perfilado lateral en ${shotName}`,
+            exerciseReason: `Repite ${shotName} girando el tronco de lado hasta que la silueta de armado se ilumine en verde/cian.`,
+            targetShot: this.shot,
+            targetDrill: currentDrill,
+          };
+        }
         return {
           dominantFault: 'prep',
           badgeText: `FALLO DOMINANTE · ARMADO (${n}/${totalReps})`,
@@ -589,6 +659,7 @@ export class TrainingSession {
           targetShot: this.shot,
           targetDrill: currentDrill,
         };
+      }
 
       case 'stance':
         return {
