@@ -2,10 +2,12 @@ import { WristSwingDetector } from '../camera/swingDetector';
 import type { DetectedSwing } from '../camera/swingDetector';
 import type { PoseFrame } from '../camera/pose';
 import { sfx } from '../audio/sfx';
+import { BIOMECHANIC_LABELS, SHOT_DRILL } from '../analysis/progress';
+import type { BiomechanicKey, BiomechanicsBreakdown } from '../analysis/progress';
 import { impactZone, readBody, worstPostureCue } from './metrics';
 import type { BodyState, Level } from './metrics';
 import { clamp, SHOT_NAMES } from '../types';
-import type { ShotType } from '../types';
+import type { DrillType, ShotType } from '../types';
 
 export type { DetectedSwing };
 
@@ -34,7 +36,10 @@ export interface RepResult {
   dtMs: number | null; // golpe respecto al beat (negativo = pronto)
   zoneDistBw: number | null; // distancia muñeca→zona de impacto (anchos de cuerpo)
   power: number; // 0..1
-  prepOk: boolean;
+  prepOk: boolean; // armado temprano de la pala
+  kneesOk: boolean; // flexión de rodillas adecuada
+  stanceOk: boolean; // separación de pies (base estable)
+  timingOk: boolean; // sincronización dentro de la ventana de impacto
   postureOk: boolean;
   score: number; // 0..100
   correct: boolean;
@@ -48,6 +53,16 @@ export interface Feedback {
   voice: string;
 }
 
+export interface CoachDiagnosisCard {
+  dominantFault: BiomechanicKey | null;
+  badgeText: string;
+  diagnosis: string;
+  exerciseName: string;
+  exerciseReason: string;
+  targetShot: ShotType;
+  targetDrill: DrillType;
+}
+
 export interface TrainingSummary {
   shot: ShotType;
   reps: RepResult[];
@@ -57,6 +72,10 @@ export interface TrainingSummary {
   meanDtMs: number | null;
   bestStreak: number;
   avgPower: number;
+  /** Desglose de fallos por tipo de biomecánica (rodillas, armado, separación de pies, timing). */
+  biomechanics: BiomechanicsBreakdown;
+  dominantFault: BiomechanicKey | null;
+  coachCard: CoachDiagnosisCard;
   mainIssue: { text: string; tipId: string } | null;
   recommendation: string;
 }
@@ -145,6 +164,8 @@ export class TrainingSession {
   private resolveTime: number | null = null; // resolución diferida: deja terminar la extensión
   private maxExt = 0; // máxima distancia muñeca-cadera vista desde la captura
   private prepSeen = false;
+  private kneesBadSeen = false;
+  private stanceBadSeen = false;
   private postureBadSeen = false;
   private postureFault: PostureFault = null;
   lastPower = 0;
@@ -163,6 +184,8 @@ export class TrainingSession {
   }
 
   private recordPosture(body: BodyState): void {
+    if (body.knees.level === 'bad') this.kneesBadSeen = true;
+    if (body.stance.level === 'bad') this.stanceBadSeen = true;
     if (worstPostureCue(body).level === 'bad') {
       this.postureBadSeen = true;
       if (body.knees.level === 'bad') this.postureFault = 'knees';
@@ -213,6 +236,8 @@ export class TrainingSession {
       case 'announce':
         if (t - this.phaseStart > T_ANNOUNCE) {
           this.prepSeen = false;
+          this.kneesBadSeen = false;
+          this.stanceBadSeen = false;
           this.postureBadSeen = false;
           this.postureFault = null;
           this.capturedSwing = null;
@@ -299,9 +324,18 @@ export class TrainingSession {
     let rep: RepResult;
     if (!s) {
       rep = {
-        swung: false, dtMs: null, zoneDistBw: null, power: 0,
-        prepOk: this.prepSeen, postureOk: !this.postureBadSeen,
-        score: 0, correct: false, cause: 'noswing',
+        swung: false,
+        dtMs: null,
+        zoneDistBw: null,
+        power: 0,
+        prepOk: this.prepSeen,
+        kneesOk: !this.kneesBadSeen,
+        stanceOk: !this.stanceBadSeen,
+        timingOk: false,
+        postureOk: !this.postureBadSeen,
+        score: 0,
+        correct: false,
+        cause: 'noswing',
       };
       this.feedback = {
         text: 'SIN GOLPE',
@@ -393,9 +427,18 @@ export class TrainingSession {
       }
 
       rep = {
-        swung: true, dtMs, zoneDistBw, power: s.power,
-        prepOk: this.prepSeen, postureOk: !this.postureBadSeen,
-        score, correct, cause,
+        swung: true,
+        dtMs,
+        zoneDistBw,
+        power: s.power,
+        prepOk: this.prepSeen,
+        kneesOk: !this.kneesBadSeen,
+        stanceOk: !this.stanceBadSeen,
+        timingOk: tScore > 10,
+        postureOk: !this.postureBadSeen,
+        score,
+        correct,
+        cause,
       };
     }
 
@@ -423,6 +466,7 @@ export class TrainingSession {
 
   private buildSummary(): TrainingSummary {
     const reps = this.reps;
+    const totalReps = reps.length || 1;
     const swung = reps.filter((r) => r.dtMs !== null);
     const correct = reps.filter((r) => r.correct).length;
     const avgAbsDtMs = swung.length
@@ -433,48 +477,54 @@ export class TrainingSession {
       : null;
     const avgPower = swung.length ? swung.reduce((a, r) => a + r.power, 0) / swung.length : 0;
 
-    // Error principal: causa de fallo más repetida
-    const counts = new Map<Exclude<FailCause, null>, number>();
-    for (const r of reps) if (r.cause) counts.set(r.cause, (counts.get(r.cause) ?? 0) + 1);
-    let main: Exclude<FailCause, null> | null = null;
-    for (const [k, v] of counts) if (v >= 2 && (!main || v > (counts.get(main) ?? 0))) main = k;
-
-    const name = SHOT_NAMES[this.shot];
-    const ISSUES: Record<Exclude<FailCause, null>, { text: string; tipId: string; rec: string }> = {
-      late: {
-        text: 'Llegas tarde al impacto',
-        tipId: 'timing-tarde',
-        rec: `Arma la pala en cuanto se anuncia el golpe y empieza el gesto antes del pitido. Repite la sesión de ${name} buscando golpear justo en el beat.`,
-      },
-      early: {
-        text: 'Golpeas antes de tiempo',
-        tipId: 'timing-pronto',
-        rec: `Acompaña el anillo con la preparación y suelta el gesto solo cuando se cierre. Repite ${name} a este ritmo antes de subirlo.`,
-      },
-      zone: {
-        text: 'El punto de impacto se desvía de la zona ideal',
-        tipId: 'impacto-zona',
-        rec: `Haz pasar la mano por el círculo objetivo: es la distancia natural de impacto de ${SHOT_NAMES[this.shot]}. Hazlo lento y exagerado 5 veces y vuelve a la sesión.`,
-      },
-      form: {
-        text: 'Falta preparación o postura previa al golpe',
-        tipId: 'preparacion',
-        rec: 'Flexiona las rodillas y lleva la pala atrás/arriba ANTES de que se cierre el anillo: la preparación temprana es la mitad del golpe.',
-      },
-      noswing: {
-        text: 'Te quedas sin golpear en varias repeticiones',
-        tipId: 'ritmo',
-        rec: 'No busques el golpe perfecto: sigue el ritmo aunque falles. La constancia del gesto llega antes que la precisión.',
-      },
+    // 1. Desglose de fallos por tipo de biomecánica (rodillas, armado, separación de pies, timing)
+    const biomechanics: BiomechanicsBreakdown = {
+      knees: reps.filter((r) => !r.kneesOk).length,
+      prep: reps.filter((r) => !r.prepOk).length,
+      stance: reps.filter((r) => !r.stanceOk).length,
+      timing: reps.filter((r) => !r.timingOk).length,
     };
 
+    const bioKeys: BiomechanicKey[] = ['timing', 'prep', 'knees', 'stance'];
+    let dominantFault: BiomechanicKey | null = null;
+    let maxBioCount = 0;
+    for (const k of bioKeys) {
+      if (biomechanics[k] > maxBioCount) {
+        maxBioCount = biomechanics[k];
+        dominantFault = k;
+      }
+    }
+
+    const name = SHOT_NAMES[this.shot];
+    const currentDrill: DrillType = SHOT_DRILL[this.shot] ?? 'forehand';
     const consistency = this.consistency;
-    const mainIssue = main ? { text: ISSUES[main].text, tipId: ISSUES[main].tipId } : null;
-    const recommendation = main
-      ? ISSUES[main].rec
-      : consistency >= 85
-        ? `Gesto muy consistente. Siguiente sesión: prueba ${name} con menos margen o cambia a un golpe que domines menos.`
-        : `Buen trabajo. Repite la sesión de ${name} buscando superar el ${consistency}% de consistencia.`;
+
+    const coachCard = this.buildCoachDiagnosisCard(
+      dominantFault,
+      biomechanics,
+      totalReps,
+      meanDtMs,
+      consistency,
+      name,
+      currentDrill,
+    );
+
+    // Identificador estable para correcciones recurrentes en progress.ts
+    let mainIssue: { text: string; tipId: string } | null = null;
+    if (dominantFault && biomechanics[dominantFault] >= 2) {
+      const tipId =
+        dominantFault === 'timing'
+          ? (meanDtMs ?? 0) >= 0
+            ? 'timing-tarde'
+            : 'timing-pronto'
+          : `biomec-${dominantFault}`;
+      mainIssue = {
+        text: `${BIOMECHANIC_LABELS[dominantFault]}: ${coachCard.diagnosis}`,
+        tipId,
+      };
+    }
+
+    const recommendation = `${coachCard.exerciseName} — ${coachCard.exerciseReason}`;
 
     return {
       shot: this.shot,
@@ -485,8 +535,88 @@ export class TrainingSession {
       meanDtMs,
       bestStreak: this.bestStreak,
       avgPower,
+      biomechanics,
+      dominantFault,
+      coachCard,
       mainIssue,
       recommendation,
     };
+  }
+
+  private buildCoachDiagnosisCard(
+    dominantFault: BiomechanicKey | null,
+    biomechanics: BiomechanicsBreakdown,
+    totalReps: number,
+    meanDtMs: number | null,
+    consistency: number,
+    shotName: string,
+    currentDrill: DrillType,
+  ): CoachDiagnosisCard {
+    if (!dominantFault || biomechanics[dominantFault] === 0) {
+      const nextShot: ShotType = this.shot === 'forehand' ? 'backhand' : this.shot === 'backhand' ? 'bandeja' : 'vibora';
+      const nextDrill: DrillType = SHOT_DRILL[nextShot] ?? 'mixto';
+      return {
+        dominantFault: null,
+        badgeText: 'BIOMECÁNICA IMPECABLE',
+        diagnosis: `Has mantenido una postura sólida, buen armado y sincronización en tus repeticiones de ${shotName} (${consistency}% de consistencia).`,
+        exerciseName: `Siguiente reto: Técnica de ${SHOT_NAMES[nextShot]}`,
+        exerciseReason: `Transfiere esta calidad de apoyos y lectura de bola a tu ${SHOT_NAMES[nextShot]}.`,
+        targetShot: nextShot,
+        targetDrill: nextDrill,
+      };
+    }
+
+    const n = biomechanics[dominantFault];
+    switch (dominantFault) {
+      case 'knees':
+        return {
+          dominantFault: 'knees',
+          badgeText: `FALLO DOMINANTE · RODILLAS (${n}/${totalReps})`,
+          diagnosis: `Mantuviste las piernas demasiado rígidas en ${n} de ${totalReps} repeticiones. Sin flexión de rodillas pierdes transferencia de peso y control de altura.`,
+          exerciseName: `Repetir ${shotName} con centro de gravedad bajo`,
+          exerciseReason: `Vuelve a lanzar la serie de ${shotName} flexionando las rodillas desde el aviso de preparación antes de cada impacto.`,
+          targetShot: this.shot,
+          targetDrill: currentDrill,
+        };
+
+      case 'prep':
+        return {
+          dominantFault: 'prep',
+          badgeText: `FALLO DOMINANTE · ARMADO (${n}/${totalReps})`,
+          diagnosis: `No armaste la pala a tiempo en ${n} de ${totalReps} repeticiones. Preparar tarde te obliga a dar un latigazo precipitado.`,
+          exerciseName: `Serie de armado temprano en ${shotName}`,
+          exerciseReason: `Repite ${shotName} llevando la mano hacia atrás en cuanto aparezca «PREPARA LA PALA», antes de que empiece a cerrarse el anillo.`,
+          targetShot: this.shot,
+          targetDrill: currentDrill,
+        };
+
+      case 'stance':
+        return {
+          dominantFault: 'stance',
+          badgeText: `FALLO DOMINANTE · SEPARACIÓN DE PIES (${n}/${totalReps})`,
+          diagnosis: `Jugaste con los pies demasiado juntos en ${n} de ${totalReps} repeticiones, restando equilibrio en el momento del impacto.`,
+          exerciseName: `Serie de estabilidad y base en ${shotName}`,
+          exerciseReason: `Repite el ejercicio separando los pies un poco más que el ancho de tus hombros durante toda la serie.`,
+          targetShot: this.shot,
+          targetDrill: currentDrill,
+        };
+
+      case 'timing': {
+        const isLate = (meanDtMs ?? 0) >= 0;
+        return {
+          dominantFault: 'timing',
+          badgeText: `FALLO DOMINANTE · TIMING (${n}/${totalReps})`,
+          diagnosis: isLate
+            ? `Tu impacto fue tardío en ${n} de ${totalReps} repeticiones (media ${meanDtMs !== null ? `+${meanDtMs} ms` : 'tarde'}). Dejas que la bola se te eche encima.`
+            : `Te precipitaste antes del impacto ideal en ${n} de ${totalReps} repeticiones (media ${meanDtMs !== null ? `${meanDtMs} ms` : 'pronto'}).`,
+          exerciseName: `Sincronización de impacto en ${shotName}`,
+          exerciseReason: isLate
+            ? `Repite la sesión de ${shotName} iniciando el avance del brazo justo antes de que la bola virtual entre en el círculo.`
+            : `Repite la sesión de ${shotName} aguantando la pala armada hasta que la bola virtual toque el centro de la zona.`,
+          targetShot: this.shot,
+          targetDrill: currentDrill,
+        };
+      }
+    }
   }
 }

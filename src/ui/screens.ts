@@ -1,11 +1,20 @@
 import { sfx } from '../audio/sfx';
+import { BIOMECHANIC_LABELS, summarize } from '../analysis/progress';
 import { RIVALS, ROUND_NAMES, TOURNEY_GAMES } from '../modes/tournament';
 import type { Report } from '../analysis/coach';
-import type { ChallengeRecord, Correction, DrillSuggestion, ProgressSummary, SavedSession, XpInfo } from '../analysis/progress';
+import type {
+  BiomechanicKey,
+  ChallengeRecord,
+  Correction,
+  DrillSuggestion,
+  ProgressSummary,
+  SavedSession,
+  XpInfo,
+} from '../analysis/progress';
 import type { ChallengeDef, ChallengeResult } from '../modes/challenges';
 import type { TrainingSummary } from '../training/session';
 import { SHOT_NAMES } from '../types';
-import type { ControlMode, Difficulty, DrillType } from '../types';
+import type { ControlMode, Difficulty, DrillType, ShotType } from '../types';
 
 export interface MenuSettings {
   control: ControlMode;
@@ -54,6 +63,7 @@ class UI {
   onOnlineBack: (() => void) | null = null;
   onStartTraining: (() => void) | null = null;
   onTrainAgain: (() => void) | null = null;
+  onTrainRecommended: ((shot: ShotType, drill: DrillType) => void) | null = null;
   onShowChallenges: (() => void) | null = null;
   onPlayChallenge: ((id: string) => void) | null = null;
   onChallengeAgain: (() => void) | null = null;
@@ -61,6 +71,7 @@ class UI {
   private toastTimer: number | null = null;
   private shotChipTimer: number | null = null;
   private tourneyPhase: TourneyPhase = 'play';
+  private recommendedTarget: { shot: ShotType; drill: DrillType } | null = null;
 
   init(): void {
     this.wireOptionRow('#controlRow', 'control', 'control');
@@ -98,6 +109,13 @@ class UI {
     $('#btnOnlineBack').addEventListener('click', () => this.onOnlineBack?.());
     $('#btnTraining').addEventListener('click', () => this.onStartTraining?.());
     $('#btnTrainAgain').addEventListener('click', () => this.onTrainAgain?.());
+    $('#btnTrainRecommended').addEventListener('click', () => {
+      if (this.recommendedTarget) {
+        this.onTrainRecommended?.(this.recommendedTarget.shot, this.recommendedTarget.drill);
+      } else {
+        this.onTrainAgain?.();
+      }
+    });
     $('#btnTrainMenu').addEventListener('click', () => this.show('menu'));
     $('#btnChallenges').addEventListener('click', () => this.onShowChallenges?.());
     $('#btnChallengesBack').addEventListener('click', () => this.show('menu'));
@@ -159,7 +177,7 @@ class UI {
       .forEach((b) => b.classList.toggle('selected', b.dataset.drill === drill));
   }
 
-  /** Tarjeta "entrenamiento del día" del menú: racha + drill sugerido. */
+  /** Tarjeta "entrenamiento del día" del menú: racha + consistencia acumulada + drill sugerido. */
   setCoach(
     summary: ProgressSummary,
     suggestion: DrillSuggestion | null,
@@ -173,7 +191,9 @@ class UI {
     }
     card.hidden = false;
     if (xp && xp.xp > 0) {
-      $('#coachLevel').textContent = `Nivel ${xp.level} · ${xp.title}`;
+      const consTxt =
+        summary.overallConsistency > 0 ? ` · Consistencia técnica: ${summary.overallConsistency}/100` : '';
+      $('#coachLevel').textContent = `Nivel ${xp.level} · ${xp.title}${consTxt}`;
       $('#coachXpFill').style.width = `${Math.round((xp.levelXp / xp.levelSize) * 100)}%`;
       ($('#coachXpBar') as HTMLElement).style.display = 'block';
     } else {
@@ -368,8 +388,8 @@ class UI {
     this.show('challengeEnd');
   }
 
-  /** TrainingSessionSummary: resumen visual de la sesión de técnica. */
-  showTrainingSummary(s: TrainingSummary, xpGained = 0): void {
+  /** TrainingSessionSummary: resumen visual de la sesión de técnica con desglose biomecánico y Diagnóstico del Coach. */
+  showTrainingSummary(s: TrainingSummary, xpGained = 0, overallConsistency?: number): void {
     $('#tsShot').textContent =
       `SESIÓN · ${SHOT_NAMES[s.shot].toUpperCase()}` + (xpGained > 0 ? ` · +${xpGained} XP` : '');
     $('#tsReps').textContent = `${s.reps.length}`;
@@ -378,7 +398,11 @@ class UI {
     $('#tsTiming').textContent =
       s.meanDtMs === null ? '—' : `${s.meanDtMs > 0 ? '+' : ''}${s.meanDtMs} ms`;
 
-    // Gauge de consistencia (anillo conic-gradient, color por estado)
+    // Puntuación de consistencia técnica general acumulada en el historial (0..100)
+    const overall = overallConsistency ?? s.consistency;
+    $('#tsOverallBadge').textContent = `📊 Consistencia técnica acumulada (historial): ${overall} / 100`;
+
+    // Gauge de consistencia de la sesión (anillo conic-gradient, color por estado)
     const pct = s.consistency;
     const col = pct >= 75 ? 'var(--tr-good)' : pct >= 50 ? 'var(--tr-warn)' : 'var(--tr-bad)';
     const gauge = $('#tsGauge');
@@ -387,16 +411,46 @@ class UI {
     gv.textContent = `${pct}%`;
     gv.style.color = col;
 
+    // 1. Desglose de fallos por tipo de biomecánica (rodillas, armado, separación de pies, timing)
+    const bioOrder: BiomechanicKey[] = ['knees', 'prep', 'stance', 'timing'];
+    $('#tsBioGrid').innerHTML = bioOrder
+      .map((k) => {
+        const faults = s.biomechanics[k];
+        const isDom = s.dominantFault === k && faults > 0;
+        const cls = isDom || faults >= 3 ? 'bad' : faults > 0 ? 'warn' : 'good';
+        const status =
+          faults === 0
+            ? '✓ 0 fallos'
+            : `${isDom ? '⚠️ ' : ''}${faults} ${faults === 1 ? 'fallo' : 'fallos'}`;
+        return `<div class="ts-bio-item ${cls}"><span class="bio-name">${BIOMECHANIC_LABELS[k]}</span><span class="bio-val">${status}</span></div>`;
+      })
+      .join('');
+
     this.drawTimingChart($('#tsChart') as HTMLCanvasElement, s);
 
-    // TrainingInsightCard: error principal + recomendación
+    // 3. Tarjeta destacada: Diagnóstico del Coach + recomendación directa del ejercicio
+    const cc = s.coachCard;
+    const badgeCls = cc.dominantFault === null ? 'good' : '';
+    $('#tsCoachCard').innerHTML = `
+      <div class="ts-coach-head">
+        <span class="ts-coach-title">🧑‍🏫 Diagnóstico del Coach</span>
+        <span class="ts-coach-badge ${badgeCls}">${cc.badgeText}</span>
+      </div>
+      <p class="ts-coach-diag">${cc.diagnosis}</p>
+      <div class="ts-coach-drill">
+        <b>🎯 Ejercicio recomendado: ${cc.exerciseName}</b>
+        <span>${cc.exerciseReason}</span>
+      </div>
+    `;
+
+    this.recommendedTarget = { shot: cc.targetShot, drill: cc.targetDrill };
+    ($('#btnTrainRecommended') as HTMLButtonElement).textContent = `🎯 ${cc.exerciseName}`;
+
+    // Tarjetas adicionales si hay nota de seguimiento
     const cards: string[] = [];
     if (s.mainIssue) {
-      cards.push(
-        `<div class="ts-insight warn"><b>A CORREGIR</b>${s.mainIssue.text}</div>`,
-      );
+      cards.push(`<div class="ts-insight warn"><b>REGISTRADO EN TU HISTORIAL</b>${s.mainIssue.text}</div>`);
     }
-    cards.push(`<div class="ts-insight"><b>PRÓXIMA SESIÓN</b>${s.recommendation}</div>`);
     $('#tsInsights').innerHTML = cards.join('');
 
     this.show('trainSummary');
@@ -479,8 +533,17 @@ class UI {
   }
 
   showProgress(sessions: SavedSession[], corrections: Correction[], trophies = 0): void {
-    $('#progressTrophies').textContent =
-      trophies > 0 ? `🏆 Torneos ganados: ${trophies}` : '';
+    const summary = summarize(sessions);
+    const metaParts: string[] = [];
+    if (trophies > 0) metaParts.push(`🏆 Torneos ganados: ${trophies}`);
+    if (summary.overallConsistency > 0) {
+      metaParts.push(`📊 Consistencia técnica general: ${summary.overallConsistency} / 100`);
+    }
+    if (summary.dominantFault) {
+      metaParts.push(`🎯 Foco biomecánico: ${BIOMECHANIC_LABELS[summary.dominantFault]}`);
+    }
+    $('#progressTrophies').textContent = metaParts.join(' · ');
+
     const cEl = $('#progressCorrections');
     if (corrections.length === 0) {
       cEl.innerHTML =

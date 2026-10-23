@@ -1,10 +1,9 @@
 import { SKELETON, LM } from '../camera/pose';
 import type { PoseTracker } from '../camera/pose';
 import { sfx } from '../audio/sfx';
-import { impactZone } from './metrics';
-import { worstPostureCue } from './metrics';
+import { impactZone, worstPostureCue } from './metrics';
 import { REPS_PER_SESSION, TrainingSession } from './session';
-import type { TrainingSummary } from './session';
+import type { RepResult, TrainingSummary } from './session';
 import { SHOT_NAMES } from '../types';
 import type { ShotType } from '../types';
 
@@ -30,6 +29,16 @@ export interface TrainingOptions {
 }
 
 const $ = <T extends HTMLElement = HTMLElement>(sel: string): T => document.querySelector(sel) as T;
+
+/** Formatea en una línea el estado biomecánico de una repetición (rodillas, armado, pies, timing). */
+export function formatRepBiomechanics(rep: RepResult): string {
+  return [
+    `${rep.kneesOk ? '✓' : '✗'} Rodillas`,
+    `${rep.prepOk ? '✓' : '✗'} Armado`,
+    `${rep.stanceOk ? '✓' : '✗'} Pies`,
+    `${rep.timingOk ? '✓' : '✗'} Timing`,
+  ].join(' · ');
+}
 
 export class CameraTrainingView {
   private opts: TrainingOptions;
@@ -338,9 +347,14 @@ export class CameraTrainingView {
       fbEl.className = 'train-feedback';
     }
 
-    // Corrección de postura (TechniqueFeedbackPanel compacto)
+    // Corrección de postura en vivo o desglose biomecánico tras la repetición
     const cueEl = $('#trainCue');
-    if (s.body && (s.phase === 'prep' || s.phase === 'strike' || s.phase === 'announce')) {
+    const lastRep = s.reps[s.reps.length - 1];
+    if (s.phase === 'result' && lastRep) {
+      cueEl.textContent = formatRepBiomechanics(lastRep);
+      const allOk = lastRep.kneesOk && lastRep.prepOk && lastRep.stanceOk && lastRep.timingOk;
+      cueEl.className = `train-cue show ${allOk ? 'good' : lastRep.correct ? 'warn' : 'bad'}`;
+    } else if (s.body && (s.phase === 'prep' || s.phase === 'strike' || s.phase === 'announce')) {
       const cue = worstPostureCue(s.body);
       cueEl.textContent = cue.level === 'good' ? '✓ Postura lista' : cue.cue;
       cueEl.className = `train-cue show ${cue.level}`;

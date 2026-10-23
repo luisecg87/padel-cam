@@ -155,6 +155,7 @@
     <div class="screen" id="trainSummary">
       <p class="ts-kicker" id="tsShot">SESIÓN · DERECHA</p>
       <h2 class="ts-title">Resumen de la sesión</h2>
+      <div id="tsOverallBadge" class="ts-overall-badge"></div>
 
       <div class="ts-hero">
         <div class="ts-gauge" id="tsGauge"><div class="ts-gauge-inner"><span id="tsGaugeVal">0%</span><span class="lbl">consistencia</span></div></div>
@@ -166,15 +167,25 @@
         </div>
       </div>
 
+      <!-- Desglose biomecánico: rodillas, armado, separación de pies, timing -->
+      <div class="ts-bio-card">
+        <div class="ts-chart-head">Desglose biomecánico <span class="ts-chart-hint">fallos por pilar técnico en esta serie</span></div>
+        <div id="tsBioGrid" class="ts-bio-grid"></div>
+      </div>
+
       <div class="ts-chart-card">
         <div class="ts-chart-head">Timing por repetición <span class="ts-chart-hint">↑ tarde · ↓ pronto · banda = ventana ideal (±150 ms)</span></div>
         <canvas id="tsChart" height="120"></canvas>
       </div>
 
+      <!-- Tarjeta destacada: Diagnóstico del Coach + ejercicio recomendado -->
+      <div id="tsCoachCard" class="ts-coach-card"></div>
+
       <div id="tsInsights" class="ts-insights"></div>
 
       <div class="main-buttons">
-        <button class="big" id="btnTrainAgain">Repetir sesión</button>
+        <button class="big gold" id="btnTrainRecommended">🎯 Entrenar ejercicio recomendado</button>
+        <button class="big secondary" id="btnTrainAgain">Repetir misma sesión</button>
         <button class="link" id="btnTrainMenu">Volver al menú</button>
       </div>
     </div>

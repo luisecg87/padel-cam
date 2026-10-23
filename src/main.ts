@@ -8,6 +8,7 @@ import { analyzeMatch } from './analysis/coach';
 import {
   addTrophy,
   addXp,
+  calculateOverallConsistency,
   clearSessions,
   getXp,
   loadChallengeRecords,
@@ -479,7 +480,7 @@ function drillToShot(d: DrillType): ShotType {
   return d;
 }
 
-async function startTraining(): Promise<void> {
+async function startTraining(overrideShot?: ShotType): Promise<void> {
   stopIdle();
   ui.show('calib');
   ui.setCalibStatus('Iniciando cámara y análisis de pose…', 'wait');
@@ -498,7 +499,7 @@ async function startTraining(): Promise<void> {
     }
   }
   ui.show('none');
-  const shot = drillToShot(ui.settings.drill);
+  const shot = overrideShot ?? drillToShot(ui.settings.drill);
 
   const view = new CameraTrainingView({
     canvas: trainCanvas,
@@ -512,6 +513,9 @@ async function startTraining(): Promise<void> {
         date: Date.now(),
         mode: 'practice',
         title: `Técnica · ${SHOT_NAMES[shot]}`,
+        shot,
+        consistency: summary.consistency,
+        biomechanics: summary.biomechanics,
         stats: [
           { lbl: 'Consistencia', val: `${summary.consistency}%` },
           { lbl: 'Correctos', val: `${summary.correct} / ${summary.reps.length}` },
@@ -525,9 +529,10 @@ async function startTraining(): Promise<void> {
           { warn: false, text: summary.recommendation },
         ],
       });
+      const overallConsistency = calculateOverallConsistency(loadSessions());
       const xpT = addXp(summary.consistency);
       if (xpT.leveledUp) sfx.cheer(true);
-      ui.showTrainingSummary(summary, summary.consistency);
+      ui.showTrainingSummary(summary, summary.consistency, overallConsistency);
     },
     onQuit: () => {
       currentTraining = null;
@@ -569,6 +574,10 @@ ui.onOnlineJoin = (code) => void joinOnline(code);
 ui.onOnlineBack = backToMenu;
 ui.onStartTraining = () => void startTraining();
 ui.onTrainAgain = () => void startTraining();
+ui.onTrainRecommended = (shot, drill) => {
+  ui.selectDrill(drill);
+  void startTraining(shot);
+};
 ui.onShowChallenges = () => ui.showChallenges(CHALLENGES, loadChallengeRecords());
 ui.onPlayChallenge = (id) => void startChallenge(id as ChallengeId);
 ui.onChallengeAgain = () => void startChallenge(lastChallengeId);

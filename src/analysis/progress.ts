@@ -1,9 +1,26 @@
-import { SHOT_NAMES } from '../types';
+import { clamp, SHOT_NAMES } from '../types';
 import type { DrillType, ShotType } from '../types';
 import type { Report, Tip } from './coach';
 
 // Historial de sesiones e informes del entrenador, guardado en localStorage
 // para que las correcciones sobrevivan al cierre del navegador.
+
+export type BiomechanicKey = 'knees' | 'prep' | 'stance' | 'timing';
+
+/** Desglose de fallos por tipo de biomecánica en una sesión o acumulado. */
+export interface BiomechanicsBreakdown {
+  knees: number; // flexión de rodillas
+  prep: number; // armado temprano de la pala
+  stance: number; // separación de pies (base)
+  timing: number; // sincronización con el impacto
+}
+
+export const BIOMECHANIC_LABELS: Record<BiomechanicKey, string> = {
+  knees: 'Rodillas',
+  prep: 'Armado',
+  stance: 'Separación de pies',
+  timing: 'Timing',
+};
 
 export interface SavedSession {
   date: number; // epoch ms
@@ -11,6 +28,12 @@ export interface SavedSession {
   title: string;
   stats: Report['stats'];
   tips: Tip[];
+  /** Puntuación de consistencia técnica de la sesión (0..100). */
+  consistency?: number;
+  /** Desglose de fallos por tipo de biomecánica registrados en la sesión. */
+  biomechanics?: BiomechanicsBreakdown;
+  /** Golpe entrenado en la sesión (si aplica). */
+  shot?: ShotType;
 }
 
 export interface Correction {
@@ -55,6 +78,74 @@ export function clearSessions(): void {
   } catch {
     /* almacenamiento no disponible */
   }
+}
+
+/**
+ * Extrae la puntuación de consistencia (0..100) de una sesión guardada.
+ * Soporta tanto el campo directo `consistency` como estadísticas guardadas ("Consistencia" / "Calidad media").
+ */
+export function extractSessionConsistency(s: SavedSession): number | null {
+  if (typeof s.consistency === 'number' && !Number.isNaN(s.consistency)) {
+    return clamp(Math.round(s.consistency), 0, 100);
+  }
+  for (const st of s.stats) {
+    if (st.lbl === 'Consistencia' || st.lbl === 'Calidad media') {
+      const n = Number.parseFloat(st.val.replace('%', '').trim());
+      if (!Number.isNaN(n)) return clamp(Math.round(n), 0, 100);
+    }
+  }
+  return null;
+}
+
+/**
+ * Calcula la puntuación de consistencia técnica general (0 a 100) acumulada en el historial.
+ * Pondera ligeramente más las sesiones recientes para reflejar la evolución real del jugador.
+ */
+export function calculateOverallConsistency(sessions: SavedSession[]): number {
+  const scores: number[] = [];
+  for (const s of sessions) {
+    const c = extractSessionConsistency(s);
+    if (c !== null) scores.push(c);
+  }
+  if (scores.length === 0) return 0;
+  let weightedSum = 0;
+  let weightTotal = 0;
+  for (let i = 0; i < scores.length; i++) {
+    const weight = 1 + (i / scores.length) * 0.5;
+    weightedSum += scores[i] * weight;
+    weightTotal += weight;
+  }
+  return clamp(Math.round(weightedSum / weightTotal), 0, 100);
+}
+
+/**
+ * Acumula el desglose de fallos biomecánicos (rodillas, armado, separación de pies, timing)
+ * a lo largo del historial y devuelve también el fallo dominante.
+ */
+export function aggregateBiomechanics(sessions: SavedSession[]): {
+  breakdown: BiomechanicsBreakdown;
+  dominantFault: BiomechanicKey | null;
+  totalFaults: number;
+} {
+  const breakdown: BiomechanicsBreakdown = { knees: 0, prep: 0, stance: 0, timing: 0 };
+  for (const s of sessions) {
+    if (!s.biomechanics) continue;
+    breakdown.knees += s.biomechanics.knees || 0;
+    breakdown.prep += s.biomechanics.prep || 0;
+    breakdown.stance += s.biomechanics.stance || 0;
+    breakdown.timing += s.biomechanics.timing || 0;
+  }
+  const keys: BiomechanicKey[] = ['timing', 'prep', 'knees', 'stance'];
+  let dominantFault: BiomechanicKey | null = null;
+  let maxCount = 0;
+  for (const k of keys) {
+    if (breakdown[k] > maxCount) {
+      maxCount = breakdown[k];
+      dominantFault = k;
+    }
+  }
+  const totalFaults = breakdown.knees + breakdown.prep + breakdown.stance + breakdown.timing;
+  return { breakdown, dominantFault, totalFaults };
 }
 
 /**
@@ -206,6 +297,12 @@ export interface ProgressSummary {
   totalSessions: number;
   streakDays: number; // días consecutivos entrenados (sigue viva si entrenaste ayer)
   trainedToday: boolean;
+  /** Puntuación de consistencia técnica general (0 a 100) acumulada en el historial. */
+  overallConsistency: number;
+  /** Desglose acumulado de fallos biomecánicos en el historial. */
+  biomechanics: BiomechanicsBreakdown;
+  /** Fallo biomecánico dominante en el historial del jugador. */
+  dominantFault: BiomechanicKey | null;
 }
 
 export function summarize(sessions: SavedSession[]): ProgressSummary {
@@ -218,7 +315,16 @@ export function summarize(sessions: SavedSession[]): ProgressSummary {
     streakDays++;
     d.setDate(d.getDate() - 1);
   }
-  return { totalSessions: sessions.length, streakDays, trainedToday };
+  const overallConsistency = calculateOverallConsistency(sessions);
+  const { breakdown: biomechanics, dominantFault } = aggregateBiomechanics(sessions);
+  return {
+    totalSessions: sessions.length,
+    streakDays,
+    trainedToday,
+    overallConsistency,
+    biomechanics,
+    dominantFault,
+  };
 }
 
 export interface DrillSuggestion {
@@ -226,7 +332,7 @@ export interface DrillSuggestion {
   reason: string;
 }
 
-const SHOT_DRILL: Partial<Record<ShotType, DrillType>> = {
+export const SHOT_DRILL: Partial<Record<ShotType, DrillType>> = {
   forehand: 'forehand',
   backhand: 'backhand',
   volleyFh: 'volley',
@@ -239,6 +345,11 @@ const SHOT_DRILL: Partial<Record<ShotType, DrillType>> = {
 const KEY_DRILL: Record<string, DrillSuggestion> = {
   'timing-tarde': { drill: 'mixto', reason: 'Llegas tarde a la bola: afina el timing con golpes variados.' },
   'timing-pronto': { drill: 'mixto', reason: 'Golpeas antes de tiempo: afina el timing con golpes variados.' },
+  'biomec-knees': { drill: 'bandeja', reason: 'Te falta flexión de rodillas: entrena bandeja y defensa baja flexionando piernas.' },
+  'biomec-prep': { drill: 'forehand', reason: 'Armas la pala tarde: entrena la preparación temprana en tu derecha.' },
+  'biomec-stance': { drill: 'volley', reason: 'Base de pies estrecha: entrena voleas manteniendo una postura ancha y estable.' },
+  'preparacion': { drill: 'forehand', reason: 'Falta preparación previa al golpe: trabaja el armado temprano.' },
+  'impacto-zona': { drill: 'forehand', reason: 'El punto de impacto se desvía: entrena la extensión del brazo en derecha.' },
   'llegar-bola': { drill: 'mixto', reason: 'Se te escapan bolas: trabaja el desplazamiento con golpes variados.' },
   'golpes-al-aire': { drill: 'mixto', reason: 'Demasiados golpes al aire: entrena la lectura de bola.' },
   'eleccion-golpe': { drill: 'mixto', reason: 'Confundes qué golpe toca: el drill mixto te obliga a leer cada bola.' },
