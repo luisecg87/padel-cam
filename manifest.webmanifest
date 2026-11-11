@@ -1,0 +1,17 @@
+{
+  "name": "Pádel Cam — entrena con tu cuerpo",
+  "short_name": "Pádel Cam",
+  "description": "Tu entrenador de pádel en casa. La cámara lee tu gesto real y lo corrige. Juega gratis en el navegador, sin instalar nada.",
+  "lang": "es",
+  "start_url": ".",
+  "scope": ".",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#050c18",
+  "theme_color": "#0b1e33",
+  "icons": [
+    { "src": "icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}

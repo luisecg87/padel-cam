@@ -1,0 +1,456 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+  <meta name="theme-color" content="#060911" />
+  <title>Pádel Cam — entrena pádel con tu cuerpo desde el navegador</title>
+  <meta name="description" content="Tu entrenador de pádel en casa. La cámara lee tu gesto real y lo corrige: derecha, revés, bandeja, víbora, volea y remate. Juega gratis en el navegador, sin instalar nada." />
+  <link rel="canonical" href="https://luisecg87.github.io/padel-cam/" />
+
+  <!-- Iconos y PWA -->
+  <link rel="icon" href="./favicon.svg" type="image/svg+xml" />
+  <link rel="apple-touch-icon" href="./apple-touch-icon.png" />
+  <link rel="manifest" href="./manifest.webmanifest" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="Pádel Cam" />
+
+  <!-- Open Graph (WhatsApp, Facebook, LinkedIn…) -->
+  <meta property="og:type" content="website" />
+  <meta property="og:site_name" content="Pádel Cam" />
+  <meta property="og:title" content="Pádel Cam — entrena pádel con tu cuerpo" />
+  <meta property="og:description" content="Tu entrenador de pádel en casa. La cámara lee tu gesto real y lo corrige. Juega gratis en el navegador." />
+  <meta property="og:url" content="https://luisecg87.github.io/padel-cam/" />
+  <meta property="og:image" content="https://luisecg87.github.io/padel-cam/og-image.png" />
+  <meta property="og:image:width" content="1200" />
+  <meta property="og:image:height" content="630" />
+  <meta property="og:locale" content="es_ES" />
+
+  <!-- Twitter / X -->
+  <meta name="twitter:card" content="summary_large_image" />
+  <meta name="twitter:title" content="Pádel Cam — entrena pádel con tu cuerpo" />
+  <meta name="twitter:description" content="Tu entrenador de pádel en casa. La cámara lee tu gesto real y lo corrige. Juega gratis en el navegador." />
+  <meta name="twitter:image" content="https://luisecg87.github.io/padel-cam/og-image.png" />
+
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;600;700&family=Space+Grotesk:wght@500;700&display=swap" rel="stylesheet" />
+  <script type="module" crossorigin src="./assets/index-DPK1bmpN.js"></script>
+  <link rel="modulepreload" crossorigin href="./assets/render-BSX0VBHs.js">
+  <link rel="stylesheet" crossorigin href="./assets/index-DD38scQo.css">
+</head>
+<body>
+  <canvas id="game"></canvas>
+  <canvas id="trainCanvas"></canvas>
+  <video id="cam" playsinline muted autoplay></video>
+  <canvas id="camPreview" width="180" height="135"></canvas>
+
+  <!-- HUD del entrenamiento técnico (sobre la cámara, legible a 3 m) -->
+  <div id="trainHud">
+    <div class="train-top">
+      <div class="train-chip shot"><span class="lbl">GOLPE</span><span id="trainShot">—</span></div>
+      <div class="train-chip"><span class="lbl">REP</span><span id="trainRep">1 / 10</span></div>
+      <div class="train-chip accent"><span class="lbl">CONSIST.</span><span id="trainScore">—</span></div>
+      <div class="train-chip volt"><span class="lbl">RACHA</span><span id="trainStreak">0</span></div>
+    </div>
+    <div id="trainPhase" class="train-phase"></div>
+    <div id="trainFeedback" class="train-feedback"></div>
+    <div id="trainCue" class="train-cue"></div>
+    <div id="trainPower"><div id="trainPowerFill"></div><span class="lbl">POTENCIA</span></div>
+    <button id="btnTrainQuit" title="Terminar sesión" aria-label="Terminar sesión">✕</button>
+  </div>
+
+  <div id="ui">
+    <!-- Bienvenida (solo primera visita, o desde "¿Cómo funciona?") -->
+    <div class="screen" id="welcome">
+      <div class="wel-card">
+        <!-- Paso 1: qué es -->
+        <div class="wel-step" data-step="1">
+          <div class="wel-logo">🎾</div>
+          <h1 class="wel-title">Bienvenido a Pádel Cam</h1>
+          <p class="wel-lead">Tu entrenador de pádel en casa. No es un juego de botones: <b>tu gesto real es el que juega.</b></p>
+          <ul class="wel-points">
+            <li><span>🏃</span> Muévete y golpea con tu cuerpo frente a la cámara</li>
+            <li><span>🎯</span> La cámara lee tu técnica y te corrige, golpe a golpe</li>
+            <li><span>📈</span> Cada sesión te dice qué mejorar para la próxima</li>
+          </ul>
+          <button class="big primary" id="btnWelNext">Empezar →</button>
+          <button class="link" id="btnWelSkip">Saltar e ir al menú</button>
+        </div>
+
+        <!-- Paso 2: cómo jugar (requisitos y privacidad visibles ya aquí) -->
+        <div class="wel-step" data-step="2" hidden>
+          <h1 class="wel-title">¿Cómo quieres jugar?</h1>
+          <p class="wel-lead">Elige y te metemos directo a tu primera sesión.</p>
+          <div class="wel-choices">
+            <button class="wel-choice cam" data-wel-control="camera">
+              <span class="wel-choice-head">
+                <span class="wel-choice-t">📷 Con cámara</span>
+                <span class="wel-badge">RECOMENDADO</span>
+              </span>
+              <span class="wel-choice-d">Juega con el cuerpo · necesitas ~2 m de espacio libre y que se te vea de cintura para arriba</span>
+              <span class="wel-privacy">🔒 La cámara se procesa en tu dispositivo. No se graba ni se envía nada.</span>
+            </button>
+            <button class="wel-choice" data-wel-control="keyboard">
+              <span class="wel-choice-t">⌨️ Teclado o táctil</span>
+              <span class="wel-choice-d">Sin cámara · flechas y espacio, juega sentado</span>
+            </button>
+          </div>
+          <button class="link" id="btnWelExplore">Prefiero explorar el menú</button>
+        </div>
+
+        <!-- Paso 3: Tu primera sesión (reemplaza el menú completo para nuevos) -->
+        <div class="wel-step" data-step="3" hidden>
+          <h1 class="wel-title">Tu primera sesión</h1>
+          <p class="wel-lead">Te preparamos algo corto para empezar. Puedes ajustarlo luego.</p>
+          <div class="wel-summary">
+            <div class="wel-row">
+              <span>Jugando con</span>
+              <span><b id="welControlLabel">Cámara</b> · <button class="wel-inline-link" id="btnWelChange">cambiar</button></span>
+            </div>
+            <div class="wel-sep"></div>
+            <div class="wel-row">
+              <span>Dificultad</span>
+              <span><b>Fácil</b></span>
+            </div>
+          </div>
+          <div class="wel-chips-label">Golpe a entrenar</div>
+          <div class="btn-row chips" id="welStrokeRow">
+            <button class="opt" data-wel-stroke="mixto">Mixto</button>
+            <button class="opt" data-wel-stroke="forehand">Derecha</button>
+            <button class="opt" data-wel-stroke="backhand">Revés</button>
+            <button class="opt" data-wel-stroke="volley">Voleas</button>
+            <button class="opt" data-wel-stroke="bandeja">Bandeja</button>
+            <button class="opt" data-wel-stroke="vibora">Víbora</button>
+          </div>
+          <button class="big primary" id="btnWelStart">Empezar sesión →</button>
+          <button class="link" id="btnWelFullMenu">Ver todos los modos y ajustes</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Cupo gratuito lleno -->
+    <div class="screen" id="full">
+      <h1>Pádel<span>Cam</span></h1>
+      <div class="calib-status err">Cupo gratuito lleno (<span id="fullCap"></span> jugadores)</div>
+      <p class="hint">Estamos preparando la forma de cobrar el acceso. Vuelve a pasar más adelante — ¡gracias por el interés!</p>
+    </div>
+
+    <!-- Lobby del atleta -->
+    <div class="screen active" id="menu">
+      <header class="lobby-head">
+        <h1>Pádel<span>Cam</span></h1>
+        <p class="tagline">Juega pádel con tu cuerpo, desde el navegador</p>
+      </header>
+
+      <!-- Athlete Pass: Padel Rating + consistencia + racha + estado técnico + drill del coach -->
+      <div id="coachCard" class="coach-card">
+        <div class="pass-head">
+          <span class="pass-brand"><i></i>ATHLETE PASS</span>
+          <span id="coachPadelCategory" class="coach-rating-cat">Iniciación</span>
+        </div>
+        <div class="coach-rating-row">
+          <div class="coach-rating-main">
+            <span class="coach-rating-kicker">PADEL RATING</span>
+            <span id="coachPadelRating" class="coach-rating-val">1.50</span>
+          </div>
+          <div id="coachConsRing" class="pass-ring">
+            <div class="pass-ring-inner"><span id="coachConsVal">—</span><span class="lbl">CONSIST.</span></div>
+          </div>
+        </div>
+        <div class="pass-metrics">
+          <div class="pass-metric volt"><span class="lbl">RACHA</span><span class="val"><span id="coachStreakVal">0</span><small>días</small></span></div>
+          <div class="pass-metric"><span class="lbl">NIVEL XP</span><span class="val" id="coachXpLevel">—</span></div>
+          <div class="pass-metric"><span class="lbl">ESTADO</span><span class="val state" id="coachState" data-state="none">Sin evaluar</span></div>
+        </div>
+        <div class="pass-xp">
+          <div id="coachLevel" class="coach-level"></div>
+          <div id="coachXpBar" class="coach-xpbar"><div id="coachXpFill"></div></div>
+        </div>
+        <div id="coachStreak" class="coach-streak"></div>
+        <div id="coachGoal" class="coach-goal"></div>
+        <div class="coach-tip-wrap">
+          <span class="coach-tip-tag">COACH</span>
+          <div id="coachTip" class="coach-tip"></div>
+        </div>
+        <button class="big primary coach-cta" id="btnCoachTrain" hidden><span class="cta-k">RECOMENDADO HOY</span><span class="cta-v">Entrenar esto ahora</span><span class="cta-arrow">→</span></button>
+      </div>
+
+      <section class="lobby-actions">
+        <div class="primary-pair">
+          <button class="big primary" id="btnTraining"><span class="cta-k">ENTRENAR</span><span class="cta-v">Técnica con cámara</span></button>
+          <button class="big primary alt" id="btnMatch"><span class="cta-k">JUGAR</span><span class="cta-v">Partido vs IA</span></button>
+        </div>
+        <button class="big neon-express" id="btnExpressWarmup"><span class="cta-k">3 MIN</span><span class="cta-v">Calentamiento Express</span><span class="cta-arrow">→</span></button>
+      </section>
+
+      <section class="lobby-setup">
+        <div class="section-head">Configura tu sesión</div>
+        <div class="menu-group">
+          <label>Tu perfil</label>
+          <div class="btn-row profile-row">
+            <input id="profileName" maxlength="14" placeholder="Tu nombre" autocomplete="off" />
+            <div class="btn-row seg">
+              <button class="opt" data-hand="right">Diestro</button>
+              <button class="opt" data-hand="left">Zurdo</button>
+            </div>
+          </div>
+          <div class="btn-row" id="kitRow"></div>
+          <!-- Nube: copia de seguridad del progreso (src/cloud.ts) -->
+          <div id="cloudRow" hidden>
+            <span id="cloudStatus"></span>
+            <button class="link" id="btnCloud"></button>
+          </div>
+        </div>
+        <div class="menu-group">
+          <label>Control</label>
+          <div class="btn-row seg" id="controlRow">
+            <button class="opt selected" data-control="camera">Cámara</button>
+            <button class="opt" data-control="keyboard">Teclado / Táctil</button>
+          </div>
+        </div>
+        <div class="menu-group">
+          <label>Vista</label>
+          <div class="btn-row seg" id="viewRow">
+            <button class="opt selected" data-view="first">Primera persona</button>
+            <button class="opt" data-view="third">Desde atrás</button>
+          </div>
+        </div>
+        <div class="menu-group">
+          <label>Dificultad</label>
+          <div class="btn-row seg" id="difficultyRow">
+            <button class="opt" data-diff="easy">Fácil</button>
+            <button class="opt selected" data-diff="medium">Media</button>
+            <button class="opt" data-diff="hard">Difícil</button>
+          </div>
+        </div>
+        <div class="menu-group">
+          <label>Golpe a entrenar</label>
+          <div class="btn-row chips" id="drillRow">
+            <button class="opt selected" data-drill="mixto">Mixto</button>
+            <button class="opt" data-drill="forehand">Derecha</button>
+            <button class="opt" data-drill="backhand">Revés</button>
+            <button class="opt" data-drill="volley">Voleas</button>
+            <button class="opt" data-drill="bandeja">Bandeja</button>
+            <button class="opt" data-drill="vibora">Víbora</button>
+          </div>
+        </div>
+      </section>
+
+      <section class="lobby-modes">
+        <div class="section-head">Más modos</div>
+        <div class="mode-grid">
+          <button class="big secondary mode-tile" id="btnPractice"><span class="tile-k">LIBRE</span><b>Práctica</b><small>A tu ritmo, sin marcador</small></button>
+          <button class="big secondary mode-tile" id="btnChallenges"><span class="tile-k">RETOS</span><b>Desafíos</b><small>Consigue las 3 estrellas</small></button>
+          <button class="big secondary mode-tile" id="btnTournament"><span class="tile-k">ELIMINATORIA</span><b>Torneo</b><small>Ronda a ronda hasta el título</small></button>
+          <button class="big secondary mode-tile" id="btnOnline"><span class="tile-k">1 VS 1</span><b>Online</b><small>Invita a un amigo con un enlace</small></button>
+        </div>
+        <button class="big secondary progress-row" id="btnProgress"><span class="pr-text"><span class="tile-k">HISTORIAL</span><b>Mi progresión</b></span><span class="cta-arrow">→</span></button>
+      </section>
+
+      <p class="hint" id="menuHint"></p>
+
+      <nav class="legal-footer">
+        <button class="link legal-link" id="btnHowto">¿Cómo funciona?</button>
+        <span>·</span>
+        <a href="./privacidad.html" target="_blank" rel="noopener">Privacidad</a>
+        <span>·</span>
+        <a href="./terminos.html" target="_blank" rel="noopener">Términos</a>
+      </nav>
+    </div>
+
+    <!-- Calibración de cámara (legible a 3 m) -->
+    <div class="screen" id="calib">
+      <p class="ts-kicker">CALIBRACIÓN</p>
+      <h2>Ponte en cuadro</h2>
+      <p class="calib-lead">Cámara a 1.5–2 m. Que te vea <b>de la cintura hacia arriba</b>.</p>
+      <div id="calibStatus" class="calib-status">Iniciando cámara…</div>
+      <div id="calibCountdown" class="calib-countdown" hidden></div>
+      <div class="calib-tips">
+        <p><span class="n">01</span><span><b>Muévete</b> a los lados para desplazarte</span></p>
+        <p><span class="n">02</span><span><b>Brazo rápido</b> para golpear</span></p>
+        <p><span class="n">03</span><span><b>Globo:</b> suave arriba = bandeja · latigazo = remate · diagonal = víbora</span></p>
+      </div>
+      <p class="calib-privacy">La cámara se procesa <b>en tu dispositivo</b>. Ninguna imagen se graba ni se envía. <a href="./privacidad.html" target="_blank" rel="noopener">Más info</a></p>
+      <button class="big primary" id="btnCalibReady" disabled>¡Listo, a jugar!</button>
+      <button class="link" id="btnCalibCancel">Volver al menú</button>
+    </div>
+
+    <!-- HUD durante el juego -->
+    <div id="hud">
+      <div id="scoreboard">
+        <div id="scoreNames" hidden>
+          <span id="scoreNameP1"></span><span class="score-vs">vs</span><span id="scoreNameP2"></span>
+        </div>
+        <div class="score-nums">
+          <span id="scoreGames"></span>
+          <span id="scorePoints"></span>
+        </div>
+      </div>
+      <div id="serveInfo"></div>
+      <div id="toast"></div>
+      <div id="shotChip"></div>
+      <div id="drillHud"></div>
+      <div id="replayBadge">REPETICIÓN</div>
+      <div id="fireChip"></div>
+      <button id="btnQuit" title="Salir" aria-label="Salir">✕</button>
+    </div>
+
+    <!-- Informe post-partida -->
+    <div class="screen" id="report">
+      <div class="first-session-banner" hidden>Primera sesión registrada — tu racha empieza aquí</div>
+      <p class="ts-kicker">POST-PARTIDO</p>
+      <h2 id="reportTitle">Informe del partido</h2>
+      <div id="reportStats"></div>
+      <h3>Consejos de tu entrenador</h3>
+      <div id="reportTips"></div>
+      <p class="hint" id="reportSaved"></p>
+      <div class="main-buttons">
+        <button class="big primary" id="btnAgain">Jugar otra vez</button>
+        <button class="big secondary" id="btnReportProgress">Ver mi progreso</button>
+        <button class="link" id="btnReportMenu">Volver al menú</button>
+      </div>
+    </div>
+
+    <!-- Desafíos jugables -->
+    <div class="screen" id="challenges">
+      <p class="ts-kicker">RETOS</p>
+      <h2>Desafíos</h2>
+      <p class="hint">Tu gesto real controla el golpe: el timing da precisión, la potencia da velocidad y la mala postura penaliza. Consigue las 3 estrellas.</p>
+      <p class="duel-banner" id="challengeDuel" hidden></p>
+      <div id="challengeList" class="progress-list"></div>
+      <button class="link" id="btnChallengesBack">Volver al menú</button>
+    </div>
+
+    <!-- Resultado de desafío -->
+    <div class="screen" id="challengeEnd">
+      <p class="ts-kicker" id="ceName">DESAFÍO</p>
+      <div class="ce-stars" id="ceStars">☆☆☆</div>
+      <div class="ce-score"><span id="ceScore">0</span><span class="lbl" id="ceUnit">pts</span></div>
+      <p class="hint" id="ceRecord"></p>
+      <p class="ce-xp" id="ceXp"></p>
+      <p class="duel-banner" id="ceDuel" hidden></p>
+      <div class="main-buttons">
+        <button class="big primary" id="btnChallengeAgain">Reintentar</button>
+        <button class="big neon-share" id="btnChallengeShare">Retar a un amigo</button>
+        <button class="big secondary" id="btnChallengeList">Otros desafíos</button>
+        <button class="link" id="btnChallengeMenu">Volver al menú</button>
+      </div>
+    </div>
+
+    <!-- Resumen de sesión de entrenamiento técnico -->
+    <div class="screen" id="trainSummary">
+      <div class="first-session-banner" hidden>Primera sesión registrada — tu racha empieza aquí</div>
+      <p class="ts-kicker" id="tsShot">SESIÓN · DERECHA</p>
+      <h2 class="ts-title">Resumen de la sesión</h2>
+
+      <div id="tsRatingBanner" class="ts-rating-banner">
+        <div class="ts-rating-left">
+          <span class="ts-rating-kicker">PADEL RATING</span>
+          <span id="tsPadelRating" class="ts-rating-val">1.50</span>
+          <span id="tsPadelCat" class="ts-rating-cat">Iniciación</span>
+        </div>
+        <span id="tsPadelDelta" class="ts-rating-delta up">+0.00 =</span>
+      </div>
+
+      <div id="tsOverallBadge" class="ts-overall-badge"></div>
+
+      <div class="ts-hero">
+        <div class="ts-gauge" id="tsGauge"><div class="ts-gauge-inner"><span id="tsGaugeVal">0%</span><span class="lbl">CONSISTENCIA</span></div></div>
+        <div class="ts-stats">
+          <div class="ts-stat"><span class="val" id="tsReps">0</span><span class="lbl">Golpes</span></div>
+          <div class="ts-stat"><span class="val" id="tsCorrect">0</span><span class="lbl">Correctos</span></div>
+          <div class="ts-stat"><span class="val" id="tsTiming">—</span><span class="lbl">Timing medio (ms)</span></div>
+          <div class="ts-stat"><span class="val volt" id="tsStreak">0</span><span class="lbl">Mejor racha</span></div>
+        </div>
+      </div>
+
+      <!-- Telemetría biomecánica por pilar técnico -->
+      <div class="ts-bio-card">
+        <div class="ts-chart-head">Telemetría biomecánica <span class="ts-chart-hint">% de golpes limpios por pilar</span></div>
+        <div id="tsBioGrid" class="ts-bio-grid"></div>
+      </div>
+
+      <div class="ts-chart-card">
+        <div class="ts-chart-head">Timing por repetición <span class="ts-chart-hint">↑ tarde · ↓ pronto · banda = ±150 ms</span></div>
+        <canvas id="tsChart" height="120"></canvas>
+      </div>
+
+      <!-- Diagnóstico del Coach + CTA del ejercicio recomendado -->
+      <div class="ts-coach-wrap">
+        <div id="tsCoachCard" class="ts-coach-card"></div>
+        <button class="big primary coach-cta" id="btnTrainRecommended">Entrenar ejercicio recomendado</button>
+      </div>
+
+      <div id="tsInsights" class="ts-insights"></div>
+
+      <div class="main-buttons">
+        <button class="big neon-share" id="btnShareSummary">Compartir mi Ficha Técnica</button>
+        <button class="big secondary" id="btnTrainAgain">Repetir misma sesión</button>
+        <button class="link" id="btnTrainMenu">Volver al menú</button>
+      </div>
+    </div>
+
+    <!-- Partida online 1v1 -->
+    <div class="screen" id="online">
+      <p class="ts-kicker">1 VS 1</p>
+      <h2>Online</h2>
+      <p class="hint">Juega contra otra persona, cada uno desde su dispositivo (y con su propia cámara si quiere). Uno crea la partida y envía la invitación; el otro se une. Set corto a 3 juegos, con revancha.</p>
+      <div class="btn-row seg" id="onlineControlRow">
+        <button class="opt" data-control="camera">Cámara</button>
+        <button class="opt" data-control="keyboard">Teclado / Táctil</button>
+      </div>
+      <div id="onlineStatus" class="calib-status">Elige una opción</div>
+      <div class="main-buttons">
+        <button class="big primary" id="btnOnlineHost">Crear partida</button>
+        <button class="big neon-share" id="btnOnlineShare" hidden>Enviar invitación</button>
+        <div class="btn-row join">
+          <input id="onlineCode" maxlength="4" placeholder="CÓDIGO" autocomplete="off" />
+          <button class="big secondary" id="btnOnlineJoin">Unirse</button>
+        </div>
+        <button class="link" id="btnOnlineBack">Volver al menú</button>
+      </div>
+    </div>
+
+    <!-- Torneo -->
+    <div class="screen" id="tourney">
+      <p class="ts-kicker">TORNEO</p>
+      <h2 id="tourneyTitle">Torneo Pádel Cam</h2>
+      <p class="hint" id="tourneySub"></p>
+      <div id="tourneyBracket" class="progress-list"></div>
+      <div class="main-buttons">
+        <button class="big primary" id="btnTourneyGo">¡A jugar!</button>
+        <button class="link" id="btnTourneyQuit">Abandonar torneo</button>
+      </div>
+    </div>
+
+    <!-- Progreso -->
+    <div class="screen" id="progress">
+      <p class="ts-kicker">HISTORIAL</p>
+      <h2>Mi progreso</h2>
+      <div id="progressRatingCard" class="ts-rating-banner">
+        <div class="ts-rating-left">
+          <span class="ts-rating-kicker">PADEL RATING ACTUAL</span>
+          <span id="progressPadelRating" class="ts-rating-val">1.50</span>
+          <span id="progressPadelCat" class="ts-rating-cat">Iniciación</span>
+        </div>
+        <span id="progressStreakBadge" class="ts-rating-delta up">0 días</span>
+      </div>
+      <p class="hint" id="progressTrophies"></p>
+      <h3>Correcciones a trabajar</h3>
+      <div id="progressCorrections" class="progress-list"></div>
+      <h3>Últimas sesiones</h3>
+      <div id="progressSessions" class="progress-list"></div>
+      <div class="main-buttons">
+        <button class="big neon-share" id="btnShareProgress">Compartir mi Ficha Técnica</button>
+        <button class="big secondary" id="btnProgressBack">Volver al menú</button>
+        <button class="link" id="btnProgressClear">Borrar historial</button>
+      </div>
+    </div>
+
+    <button id="btnSound" title="Sonido">🔊</button>
+  </div>
+
+</body>
+</html>
