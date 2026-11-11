@@ -1,6 +1,6 @@
 import { LM, PoseTracker, drawPreview } from './pose';
 import type { PoseFrame } from './pose';
-import { SwingDetector } from './swing';
+import { WristSwingDetector } from './swingDetector';
 import { readBody } from '../training/metrics';
 import type { Level } from '../training/metrics';
 import { clamp } from '../types';
@@ -68,7 +68,7 @@ export class CameraControl implements ControlAdapter {
 
   private courtX = 0; // posición objetivo en pista, suavizada
   private swings: SwingEvent[] = [];
-  private detector = new SwingDetector();
+  private detector = new WristSwingDetector();
   private pose: LivePose | null = null;
   private lastFrameT = 0;
   private preview: HTMLCanvasElement;
@@ -88,7 +88,6 @@ export class CameraControl implements ControlAdapter {
     }
     if (frame.t === this.lastFrameT) return;
     this.lastFrameT = frame.t;
-    const t = frame.t / 1000;
     const lm = frame.lm;
 
     const vis = (i: number): boolean => visible(frame, i);
@@ -117,10 +116,7 @@ export class CameraControl implements ControlAdapter {
     this.updatePose(frame, bw, shouldersVisible);
 
     // --- Detección de swings con las muñecas ---
-    const wrist = (i: number): { x: number; y: number } | null =>
-      vis(i) ? { x: 1 - lm[i].x, y: lm[i].y } : null;
-    const shoulderY = (lm[LM.L_SHOULDER].y + lm[LM.R_SHOULDER].y) / 2;
-    const swing = this.detector.feed(t, { L: wrist(LM.L_WRIST), R: wrist(LM.R_WRIST) }, bw, shoulderY);
+    const swing = this.detector.detect(frame, bw);
     if (swing) {
       // Forma técnica en el momento del golpe: alimenta el gameplay
       const body = readBody(frame, 'forehand');

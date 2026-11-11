@@ -1,25 +1,49 @@
 import { SKELETON, LM } from '../camera/pose';
 import type { PoseTracker } from '../camera/pose';
 import { sfx } from '../audio/sfx';
-import { impactZone } from './metrics';
-import { worstPostureCue } from './metrics';
-import { REPS_PER_SESSION, TrainingSession } from './session';
-import type { TrainingSummary } from './session';
+import {
+  impactZone,
+  prepGuideTargets,
+  requiresGuideHand,
+  requiresShoulderTurn,
+  worstPostureCue,
+} from './metrics';
+import { TrainingSession } from './session';
+import type { RepResult, TrainingSummary } from './session';
 import { SHOT_NAMES } from '../types';
 import type { ShotType } from '../types';
 
 // CameraTrainingView: la cámara del jugador es la pantalla. Sobre ella se
-// dibujan el esqueleto (PoseOverlay), la zona de impacto (TargetZoneOverlay)
-// y el anillo de timing (TimingIndicator). Las métricas y correcciones van
-// en un HUD DOM aparte, grande y de alto contraste.
+// dibujan el esqueleto (PoseOverlay), las guías visuales de armado a 3 metros,
+// la zona de impacto (TargetZoneOverlay), el anillo de timing (TimingIndicator)
+// y el efecto Hit-Stop con onda expansiva de choque.
 
 const COLOR = {
-  good: '#34d399',
-  warn: '#fbbf24',
-  bad: '#f87171',
-  line: 'rgba(255,255,255,0.75)',
-  joint: '#ffffff',
+  good: '#00F5D4',
+  neon: '#00F5D4',
+  volt: '#CCFF00',
+  warn: '#F59E0B',
+  bad: '#FF3B5C',
+  line: 'rgba(238,242,248,0.82)',
+  joint: '#EEF2F8',
 } as const;
+
+const HUD_FONT = '"Space Grotesk", "Segoe UI", system-ui, sans-serif';
+
+/** Texto compacto para leer a 3 m tras una repetición: solo lo que falla. */
+export function compactRepCue(rep: RepResult): string {
+  const fails: string[] = [];
+  if (!rep.kneesOk) fails.push('Rodillas');
+  if (!rep.prepOk) fails.push('Armado');
+  if (!rep.stanceOk) fails.push('Pies');
+  if (!rep.timingOk) fails.push('Timing');
+  return fails.length === 0 ? '✓ Técnica limpia' : `Corrige: ${fails.join(' · ')}`;
+}
+
+/** Duración (ms) de la micro-pausa visual de impacto (Hit-Stop). */
+const HIT_STOP_MS = 55;
+/** Duración (ms) del anillo expansivo de choque tras un buen impacto. */
+const SHOCKWAVE_MS = 420;
 
 export interface TrainingOptions {
   canvas: HTMLCanvasElement;
@@ -28,11 +52,23 @@ export interface TrainingOptions {
   shots: ShotType[];
   /** Nombre de la sesión ("voleas", "golpes variados", …). */
   label: string;
+  /** Si es true, lanza la secuencia de Calentamiento Express (12 reps: 3 derechas, 3 reveses, 3 voleas, 3 bandejas). */
+  express?: boolean;
   onFinish(summary: TrainingSummary): void;
   onQuit(): void;
 }
 
 const $ = <T extends HTMLElement = HTMLElement>(sel: string): T => document.querySelector(sel) as T;
+
+/** Formatea en una línea el estado biomecánico de una repetición (rodillas, armado/perfilado, pies, timing). */
+export function formatRepBiomechanics(rep: RepResult): string {
+  return [
+    `${rep.kneesOk ? '✓' : '✗'} Rodillas`,
+    `${rep.prepOk ? '✓' : '✗'} Armado`,
+    `${rep.stanceOk ? '✓' : '✗'} Pies`,
+    `${rep.timingOk ? '✓' : '✗'} Timing`,
+  ].join(' · ');
+}
 
 export class CameraTrainingView {
   private opts: TrainingOptions;
@@ -42,6 +78,8 @@ export class CameraTrainingView {
   private running = false;
   private feedbackShownAt = 0;
   private powerShown = 0;
+  private hitStopUntil = 0;
+  private shockwaveAt = -1000;
   // Origen de la bola entrante (fracciones del vídeo): se sortea en cada
   // repetición para variar la dirección y la altura de entrada desde el fondo.
   private ballOriginK = 0.5;
@@ -51,13 +89,29 @@ export class CameraTrainingView {
   constructor(opts: TrainingOptions) {
     this.opts = opts;
     this.ctx = opts.canvas.getContext('2d')!;
-    this.session = new TrainingSession(opts.shots, opts.label);
+    this.session = new TrainingSession(opts.shots, !!opts.express, opts.label);
     this.session.onBeat = () => sfx.click();
     this.session.onResult = (rep) => {
-      this.feedbackShownAt = performance.now();
-      if (rep.correct) sfx.good();
-      else if (rep.swung) sfx.bad();
+      const now = performance.now();
+      this.feedbackShownAt = now;
       this.powerShown = rep.power;
+      if (rep.correct) {
+        sfx.good();
+        // Hit-Stop (~55 ms) + anillo expansivo + feedback háptico en golpes buenos
+        if (rep.score >= 70) {
+          this.hitStopUntil = now + HIT_STOP_MS;
+          this.shockwaveAt = now;
+          if (typeof navigator !== 'undefined' && 'vibrate' in navigator) {
+            try {
+              navigator.vibrate?.(35);
+            } catch {
+              /* vibración bloqueada o no disponible */
+            }
+          }
+        }
+      } else if (rep.swung) {
+        sfx.bad();
+      }
     };
     this.session.onFinish = (summary) => {
       this.stop();
@@ -71,6 +125,9 @@ export class CameraTrainingView {
     window.addEventListener('resize', this.resize);
     $('#trainHud').classList.add('active');
     this.opts.canvas.style.display = 'block';
+    $('#trainShot').textContent = this.session.express
+      ? `⚡ ${SHOT_NAMES[this.session.shot].toUpperCase()}`
+      : SHOT_NAMES[this.session.shot].toUpperCase();
     $('#btnTrainQuit').onclick = () => {
       this.stop();
       this.opts.onQuit();
@@ -86,6 +143,7 @@ export class CameraTrainingView {
   stop(): void {
     if (!this.running) return;
     this.running = false;
+    this.session.stopSpeech();
     cancelAnimationFrame(this.raf);
     window.removeEventListener('resize', this.resize);
     $('#trainHud').classList.remove('active');
@@ -103,21 +161,25 @@ export class CameraTrainingView {
 
   private tick(): void {
     const now = performance.now();
+    const inHitStop = now < this.hitStopUntil;
     const s = this.session;
-    s.update(this.opts.tracker.latest, now);
-    this.drawCamera();
+    if (!inHitStop) {
+      s.update(this.opts.tracker.latest, now);
+    }
+    this.drawCamera(inHitStop);
     this.drawPoseOverlay();
-    this.drawTargetZone(now);
+    this.drawPrepGuides(now);
+    this.drawTargetZone(now, inHitStop);
     this.updateHud(now);
   }
 
   /** La cámara en espejo ocupa toda la pantalla (cover). */
-  private drawCamera(): void {
+  private drawCamera(inHitStop: boolean): void {
     const ctx = this.ctx;
     const W = window.innerWidth;
     const H = window.innerHeight;
     const video = this.opts.tracker.video;
-    ctx.fillStyle = '#0a0f16';
+    ctx.fillStyle = '#060911';
     ctx.fillRect(0, 0, W, H);
     if (video.readyState >= 2 && video.videoWidth > 0) {
       const scale = Math.max(W / video.videoWidth, H / video.videoHeight);
@@ -128,8 +190,8 @@ export class CameraTrainingView {
       ctx.scale(-1, 1); // espejo
       ctx.drawImage(video, -dw / 2, -dh / 2, dw, dh);
       ctx.restore();
-      // Oscurecido sutil para que el overlay respire
-      ctx.fillStyle = 'rgba(6, 10, 16, 0.18)';
+      // Oscurecido sutil para que el overlay respire (destello breve durante hit-stop)
+      ctx.fillStyle = inHitStop ? 'rgba(0, 245, 212, 0.14)' : 'rgba(6, 9, 17, 0.24)';
       ctx.fillRect(0, 0, W, H);
     }
     this.videoRect = this.computeVideoRect(W, H);
@@ -165,19 +227,9 @@ export class CameraTrainingView {
       if (!p || (p.visibility ?? 0) < 0.4) return null;
       return this.px({ x: 1 - p.x, y: p.y });
     };
-    // El esqueleto ES el feedback de postura: verde cuando es óptima,
-    // ámbar cuando es mejorable, rojo cuando hay un fallo claro.
-    const body = this.session.body;
-    const postureLevel = body ? worstPostureCue(body).level : null;
-    const SKELETON_TINT: Record<'good' | 'warn' | 'bad', string> = {
-      good: 'rgba(52, 211, 153, 0.9)',
-      warn: 'rgba(251, 191, 36, 0.85)',
-      bad: 'rgba(248, 113, 113, 0.9)',
-    };
-    const lineColor = postureLevel ? SKELETON_TINT[postureLevel] : COLOR.line;
     ctx.lineCap = 'round';
-    ctx.strokeStyle = lineColor;
-    ctx.lineWidth = 3;
+    ctx.strokeStyle = 'rgba(6, 9, 17, 0.55)';
+    ctx.lineWidth = 7;
     for (const [a, b] of SKELETON) {
       const pa = pt(a);
       const pb = pt(b);
@@ -187,7 +239,25 @@ export class CameraTrainingView {
       ctx.lineTo(pb.x, pb.y);
       ctx.stroke();
     }
-    ctx.fillStyle = lineColor;
+    // El esqueleto ES el feedback de postura: cian cuando es óptima, ámbar
+    // cuando es mejorable, rojo cuando hay un fallo claro.
+    const body = this.session.body;
+    const postureLevel = body ? worstPostureCue(body).level : null;
+    const lineColor = postureLevel ? COLOR[postureLevel] : COLOR.line;
+    ctx.strokeStyle = lineColor;
+    ctx.globalAlpha = postureLevel ? 0.9 : 1;
+    ctx.lineWidth = 3.5;
+    for (const [a, b] of SKELETON) {
+      const pa = pt(a);
+      const pb = pt(b);
+      if (!pa || !pb) continue;
+      ctx.beginPath();
+      ctx.moveTo(pa.x, pa.y);
+      ctx.lineTo(pb.x, pb.y);
+      ctx.stroke();
+    }
+    ctx.globalAlpha = 1;
+    ctx.fillStyle = postureLevel ? lineColor : COLOR.joint;
     for (const i of [LM.L_SHOULDER, LM.R_SHOULDER, LM.L_ELBOW, LM.R_ELBOW, LM.L_HIP, LM.R_HIP, LM.L_KNEE, LM.R_KNEE]) {
       const p = pt(i);
       if (!p) continue;
@@ -199,37 +269,173 @@ export class CameraTrainingView {
     for (const i of [LM.L_WRIST, LM.R_WRIST]) {
       const p = pt(i);
       if (!p) continue;
-      ctx.fillStyle = '#7dd3fc';
+      ctx.fillStyle = COLOR.neon;
       ctx.beginPath();
       ctx.arc(p.x, p.y, 7, 0, Math.PI * 2);
       ctx.fill();
-      ctx.strokeStyle = 'rgba(125, 211, 252, 0.5)';
-      ctx.lineWidth = 2;
+      ctx.strokeStyle = 'rgba(0, 245, 212, 0.45)';
+      ctx.lineWidth = 2.5;
       ctx.beginPath();
-      ctx.arc(p.x, p.y, 12, 0, Math.PI * 2);
+      ctx.arc(p.x, p.y, 13, 0, Math.PI * 2);
       ctx.stroke();
     }
   }
 
-  // ---------- TargetZoneOverlay + TimingIndicator ----------
+  /** Etiqueta en cápsula oscura de alto contraste (legible a 3 m sobre cualquier fondo). */
+  private drawLabel(text: string, x: number, y: number, col: string, size: number): void {
+    const ctx = this.ctx;
+    ctx.save();
+    ctx.font = `700 ${size}px ${HUD_FONT}`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    const w = ctx.measureText(text).width + size * 1.3;
+    const h = size * 1.9;
+    ctx.fillStyle = 'rgba(6, 9, 17, 0.84)';
+    ctx.strokeStyle = col;
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.roundRect(x - w / 2, y - h / 2, w, h, h / 2);
+    ctx.fill();
+    ctx.stroke();
+    ctx.fillStyle = col;
+    ctx.fillText(text, x, y + 1);
+    ctx.restore();
+  }
 
-  private drawTargetZone(now: number): void {
+  // ---------- Guía visual a 3 metros durante `prep` ----------
+
+  private drawPrepGuides(now: number): void {
+    const s = this.session;
+    const body = s.body;
+    const ctx = this.ctx;
+    if (!body || s.phase !== 'prep') return;
+
+    const currentShot = s.shot;
+    const guides = prepGuideTargets(currentShot, body);
+    const sh = this.px(guides.racketShoulder);
+    const el = this.px(guides.racketElbow);
+    const rt = this.px(guides.racketTarget);
+    const unitPx = Math.max(body.bw * this.videoRect.w, 60);
+    const ringR = Math.max(unitPx * 0.34, 28);
+    const pulse = 1 + Math.sin(now / 150) * 0.06;
+
+    const armReady = body.prepared && body.shoulderTurned;
+    const armCol = armReady ? COLOR.neon : COLOR.warn;
+
+    ctx.save();
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+
+    // 1. Silueta guía del brazo armado (hombro -> codo -> mano con pala)
+    ctx.strokeStyle = armReady ? 'rgba(0, 245, 212, 0.9)' : 'rgba(245, 158, 11, 0.75)';
+    ctx.lineWidth = armReady ? 8 : 6;
+    ctx.setLineDash(armReady ? [] : [10, 8]);
+    ctx.beginPath();
+    ctx.moveTo(sh.x, sh.y);
+    ctx.quadraticCurveTo(el.x, el.y, rt.x, rt.y);
+    ctx.stroke();
+    ctx.setLineDash([]);
+
+    // 2. Anillo grande de armado a 3 metros (se ilumina en cian/verde neón al armar y perfilar)
+    if (armReady) {
+      const glow = ctx.createRadialGradient(rt.x, rt.y, ringR * 0.2, rt.x, rt.y, ringR * 1.9);
+      glow.addColorStop(0, 'rgba(0, 245, 212, 0.45)');
+      glow.addColorStop(1, 'rgba(0, 245, 212, 0)');
+      ctx.fillStyle = glow;
+      ctx.beginPath();
+      ctx.arc(rt.x, rt.y, ringR * 1.9, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    ctx.fillStyle = armReady ? 'rgba(0, 245, 212, 0.22)' : 'rgba(245, 158, 11, 0.16)';
+    ctx.strokeStyle = armCol;
+    ctx.lineWidth = armReady ? 4.5 : 3;
+    ctx.beginPath();
+    ctx.arc(rt.x, rt.y, ringR * pulse, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+
+    // Etiqueta legible a 3 metros
+    const labelSize = Math.round(Math.min(Math.max(ringR * 0.42, 16), 26));
+    const armLabel = armReady
+      ? '✓ ARMADO LISTO'
+      : !body.prepared
+        ? 'ARMA AQUÍ'
+        : '↻ GIRA HOMBROS';
+    this.drawLabel(armLabel, rt.x, rt.y + ringR + labelSize * 1.4, armCol, labelSize);
+
+    // 3. Golpes aéreos (bandeja/remate): anillo objetivo superior para levantar la mano guía
+    if (requiresGuideHand(currentShot) && guides.guideTarget && guides.guideShoulder) {
+      const gs = this.px(guides.guideShoulder);
+      const gt = this.px(guides.guideTarget);
+      const guideOk = body.guideHandUp;
+      const gCol = guideOk ? COLOR.neon : COLOR.warn;
+      const gR = Math.max(ringR * 0.85, 24);
+
+      ctx.strokeStyle = guideOk ? 'rgba(0, 245, 212, 0.8)' : 'rgba(245, 158, 11, 0.65)';
+      ctx.lineWidth = 5;
+      ctx.setLineDash(guideOk ? [] : [8, 7]);
+      ctx.beginPath();
+      ctx.moveTo(gs.x, gs.y);
+      ctx.lineTo(gt.x, gt.y);
+      ctx.stroke();
+      ctx.setLineDash([]);
+
+      if (guideOk) {
+        const gGlow = ctx.createRadialGradient(gt.x, gt.y, gR * 0.2, gt.x, gt.y, gR * 1.8);
+        gGlow.addColorStop(0, 'rgba(0, 245, 212, 0.4)');
+        gGlow.addColorStop(1, 'rgba(0, 245, 212, 0)');
+        ctx.fillStyle = gGlow;
+        ctx.beginPath();
+        ctx.arc(gt.x, gt.y, gR * 1.8, 0, Math.PI * 2);
+        ctx.fill();
+      }
+
+      ctx.fillStyle = guideOk ? 'rgba(0, 245, 212, 0.2)' : 'rgba(245, 158, 11, 0.16)';
+      ctx.strokeStyle = gCol;
+      ctx.lineWidth = guideOk ? 4 : 2.8;
+      ctx.beginPath();
+      ctx.arc(gt.x, gt.y, gR * pulse, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+
+      this.drawLabel(guideOk ? '✓ MANO GUÍA' : '↑ SUBE MANO LIBRE', gt.x, gt.y - gR - labelSize * 1.3, gCol, labelSize);
+    }
+
+    ctx.restore();
+  }
+
+  // ---------- TargetZoneOverlay + TimingIndicator + Hit-Stop ----------
+
+  private drawTargetZone(now: number, inHitStop: boolean): void {
     const s = this.session;
     const body = s.body;
     const ctx = this.ctx;
     if (!body || s.phase === 'searching' || s.phase === 'done') return;
 
-    const zone = impactZone(s.shot, body, s.zoneSpread);
+    const currentShot = s.shot;
+    const zone = impactZone(currentShot, body, s.zoneSpread);
     const c = this.px(zone.c);
     const r = Math.max(zone.r * this.videoRect.w, 26);
 
     if (s.phase === 'result') {
+      // Durante el Hit-Stop (~55 ms), congelar la bola en el punto exacto de contacto
+      if (inHitStop) {
+        this.drawIncomingBall(c, r, 1);
+      }
+
+      // Anillo expansivo de choque (Shockwave) tras un buen impacto
+      const shockAge = now - this.shockwaveAt;
+      if (shockAge >= 0 && shockAge <= SHOCKWAVE_MS) {
+        this.drawShockwave(c, r, shockAge / SHOCKWAVE_MS);
+      }
+
       // Flash del resultado sobre la zona
       const level = s.feedback?.level ?? 'warn';
       const age = (now - this.feedbackShownAt) / 1000;
       const pulse = 1 + Math.max(0, 0.25 - age) * 1.4;
-      ctx.strokeStyle = COLOR[level];
-      ctx.lineWidth = 4;
+      ctx.strokeStyle = level === 'good' ? COLOR.neon : COLOR[level];
+      ctx.lineWidth = 5;
       ctx.globalAlpha = Math.max(0.15, 1 - age * 0.8);
       ctx.beginPath();
       ctx.arc(c.x, c.y, r * pulse, 0, Math.PI * 2);
@@ -240,15 +446,21 @@ export class CameraTrainingView {
 
     // Zona objetivo: discreta en prep, activa en strike
     const active = s.phase === 'strike';
+    const prepReady =
+      body.prepared && body.shoulderTurned && (!requiresGuideHand(currentShot) || body.guideHandUp);
     ctx.setLineDash(active ? [] : [7, 7]);
-    ctx.strokeStyle = active ? COLOR.good : 'rgba(255,255,255,0.55)';
-    ctx.lineWidth = active ? 3.5 : 2;
+    ctx.strokeStyle = active
+      ? COLOR.good
+      : prepReady
+        ? COLOR.neon
+        : 'rgba(238,242,248,0.6)';
+    ctx.lineWidth = active ? 4.5 : prepReady ? 3.5 : 2.5;
     ctx.beginPath();
     ctx.arc(c.x, c.y, r, 0, Math.PI * 2);
     ctx.stroke();
     ctx.setLineDash([]);
     if (active) {
-      ctx.fillStyle = 'rgba(52, 211, 153, 0.14)';
+      ctx.fillStyle = 'rgba(0, 245, 212, 0.16)';
       ctx.beginPath();
       ctx.arc(c.x, c.y, r, 0, Math.PI * 2);
       ctx.fill();
@@ -268,10 +480,48 @@ export class CameraTrainingView {
       this.drawIncomingBall(c, r, 1 - s.ringT);
     }
     // Punto central
-    ctx.fillStyle = active ? COLOR.good : 'rgba(255,255,255,0.7)';
+    ctx.fillStyle = active ? COLOR.good : prepReady ? COLOR.neon : 'rgba(255,255,255,0.7)';
     ctx.beginPath();
     ctx.arc(c.x, c.y, 3, 0, Math.PI * 2);
     ctx.fill();
+  }
+
+  /**
+   * Anillo expansivo de choque + destello radial que subraya físicamente el
+   * instante de contacto en un golpe bueno.
+   */
+  private drawShockwave(c: { x: number; y: number }, r: number, k: number): void {
+    const ctx = this.ctx;
+    const ease = 1 - Math.pow(1 - k, 3);
+    const ringRadius = r * (0.9 + ease * 2.3);
+    const alpha = Math.max(0, 1 - k);
+
+    ctx.save();
+    ctx.strokeStyle = `rgba(0, 245, 212, ${alpha * 0.9})`;
+    ctx.lineWidth = Math.max(2, (1 - k) * 9);
+    ctx.beginPath();
+    ctx.arc(c.x, c.y, ringRadius, 0, Math.PI * 2);
+    ctx.stroke();
+
+    // Segundo anillo interior volt lime (energía de impacto)
+    ctx.strokeStyle = `rgba(204, 255, 0, ${alpha * 0.8})`;
+    ctx.lineWidth = Math.max(1.5, (1 - k) * 5);
+    ctx.beginPath();
+    ctx.arc(c.x, c.y, r * (0.6 + ease * 1.4), 0, Math.PI * 2);
+    ctx.stroke();
+
+    // Rayos cortos de impacto
+    const rays = 8;
+    for (let i = 0; i < rays; i++) {
+      const ang = (i / rays) * Math.PI * 2;
+      const r0 = r * (0.7 + ease * 0.9);
+      const r1 = r * (1.1 + ease * 1.6);
+      ctx.beginPath();
+      ctx.moveTo(c.x + Math.cos(ang) * r0, c.y + Math.sin(ang) * r0);
+      ctx.lineTo(c.x + Math.cos(ang) * r1, c.y + Math.sin(ang) * r1);
+      ctx.stroke();
+    }
+    ctx.restore();
   }
 
   /**
@@ -307,7 +557,7 @@ export class CameraTrainingView {
     // Estela corta (dos fantasmas hacia atrás en la trayectoria)
     for (const [lag, alpha] of [[0.1, 0.28], [0.2, 0.14]] as const) {
       const g = persp(Math.max(Math.min(p, 1) - lag, 0));
-      ctx.fillStyle = `rgba(230, 236, 42, ${alpha * (0.4 + 0.6 * b.s)})`;
+      ctx.fillStyle = `rgba(204, 255, 0, ${alpha * (0.4 + 0.6 * b.s)})`;
       ctx.beginPath();
       ctx.arc(g.x, g.y, Math.max(r * 0.44 * g.s, 3), 0, Math.PI * 2);
       ctx.fill();
@@ -317,18 +567,18 @@ export class CameraTrainingView {
     // cuanto más lejos, como profundidad atmosférica.
     ctx.globalAlpha = 0.55 + 0.45 * b.s;
     const glow = ctx.createRadialGradient(b.x, b.y, ballR * 0.4, b.x, b.y, ballR * 2.4);
-    glow.addColorStop(0, 'rgba(232, 238, 60, 0.4)');
-    glow.addColorStop(1, 'rgba(232, 238, 60, 0)');
+    glow.addColorStop(0, 'rgba(204, 255, 0, 0.42)');
+    glow.addColorStop(1, 'rgba(204, 255, 0, 0)');
     ctx.fillStyle = glow;
     ctx.beginPath();
     ctx.arc(b.x, b.y, ballR * 2.4, 0, Math.PI * 2);
     ctx.fill();
     const g = ctx.createRadialGradient(b.x - ballR * 0.3, b.y - ballR * 0.3, ballR * 0.2, b.x, b.y, ballR);
-    g.addColorStop(0, '#fdfda6');
-    g.addColorStop(0.65, '#e6ec2a');
-    g.addColorStop(1, '#c2c916');
+    g.addColorStop(0, '#F2FFB3');
+    g.addColorStop(0.65, '#CCFF00');
+    g.addColorStop(1, '#9FCC00');
     ctx.fillStyle = g;
-    ctx.strokeStyle = 'rgba(13, 24, 38, 0.85)';
+    ctx.strokeStyle = 'rgba(6, 9, 17, 0.9)';
     ctx.lineWidth = Math.max(ballR * 0.14, 1.5);
     ctx.beginPath();
     ctx.arc(b.x, b.y, ballR, 0, Math.PI * 2);
@@ -341,9 +591,17 @@ export class CameraTrainingView {
 
   private updateHud(now: number): void {
     const s = this.session;
+    const body = s.body;
+    const currentShot = s.shot;
 
-    $('#trainShot').textContent = SHOT_NAMES[s.shot].toUpperCase();
-    $('#trainRep').textContent = `${Math.min(s.repIndex + 1, REPS_PER_SESSION)} / ${REPS_PER_SESSION}`;
+    const shotLabel = s.express
+      ? `⚡ ${SHOT_NAMES[currentShot].toUpperCase()}`
+      : SHOT_NAMES[currentShot].toUpperCase();
+    if ($('#trainShot').textContent !== shotLabel) {
+      $('#trainShot').textContent = shotLabel;
+    }
+
+    $('#trainRep').textContent = `${Math.min(s.repIndex + 1, s.totalReps)} / ${s.totalReps}`;
     $('#trainScore').textContent = s.reps.length ? `${s.consistency}%` : '—';
     $('#trainStreak').textContent = `${s.streak}`;
 
@@ -352,26 +610,42 @@ export class CameraTrainingView {
     let phaseTxt = '';
     let phaseCls = '';
     if (s.phase === 'searching') {
-      phaseTxt = 'Colócate frente a la cámara, de la cintura hacia arriba';
+      phaseTxt = 'Ponte en cuadro · de cintura arriba';
       phaseCls = 'warn';
     } else if (s.phase === 'announce') {
-      phaseTxt = `Siguiente: ${SHOT_NAMES[s.shot]}`;
+      if (s.express && s.repIndex % 3 === 0) {
+        if (s.repIndex === 0) phaseTxt = '⚡ Calentamiento Express: 3 Derechas';
+        else if (s.repIndex === 3) phaseTxt = '⚡ ¡Cambio a Revés! (3 reps)';
+        else if (s.repIndex === 6) phaseTxt = '⚡ ¡Subimos a la Volea! (3 reps)';
+        else if (s.repIndex === 9) phaseTxt = '⚡ ¡Atento al globo: Bandeja! (3 reps)';
+        phaseCls = 'warn';
+      } else {
+        phaseTxt = `Siguiente: ${SHOT_NAMES[currentShot]}`;
+      }
     } else if (s.phase === 'prep') {
-      phaseTxt = s.body?.prepared ? 'Preparado · espera el anillo' : 'PREPARA LA PALA';
-      phaseCls = s.body?.prepared ? 'good' : '';
+      const fullPrep =
+        !!body &&
+        body.prepared &&
+        body.shoulderTurned &&
+        (!requiresGuideHand(currentShot) || body.guideHandUp);
+      if (fullPrep) {
+        phaseTxt = '✓ Armado · espera la bola';
+        phaseCls = 'good';
+      } else if (body && !body.prepared) {
+        phaseTxt = 'PREPARA LA PALA';
+      } else if (body && requiresShoulderTurn(currentShot) && !body.shoulderTurned) {
+        phaseTxt = 'Ponte de lado';
+      } else {
+        phaseTxt = 'LEVANTA LA MANO LIBRE';
+      }
     } else if (s.phase === 'strike') {
       phaseTxt = '¡AHORA!';
       phaseCls = 'good';
     }
     if (phaseEl.textContent !== phaseTxt) {
       phaseEl.textContent = phaseTxt;
-      // El jugador está lejos de la pantalla y el texto de fase es chico:
-      // sin voz, la sesión "empieza sola" en cuanto se detecta el cuerpo,
-      // sin que dé tiempo a leer qué golpe toca ni a prepararse.
+      // Lejos de la pantalla el texto de fase no se lee: se dice en voz alta
       if (s.phase === 'searching') sfx.speak('Colócate frente a la cámara');
-      else if (s.phase === 'announce') sfx.speak(SHOT_NAMES[s.shot]);
-      else if (s.phase === 'prep') sfx.speak('Prepárate');
-      else if (s.phase === 'strike') sfx.speak('Ya');
     }
     phaseEl.className = `train-phase ${phaseCls}`;
 
@@ -384,10 +658,15 @@ export class CameraTrainingView {
       fbEl.className = 'train-feedback';
     }
 
-    // Corrección de postura (TechniqueFeedbackPanel compacto)
+    // Corrección de postura en vivo o desglose biomecánico tras la repetición
     const cueEl = $('#trainCue');
-    if (s.body && (s.phase === 'prep' || s.phase === 'strike' || s.phase === 'announce')) {
-      const cue = worstPostureCue(s.body);
+    const lastRep = s.reps[s.reps.length - 1];
+    if (s.phase === 'result' && lastRep) {
+      cueEl.textContent = compactRepCue(lastRep);
+      const allOk = lastRep.kneesOk && lastRep.prepOk && lastRep.stanceOk && lastRep.timingOk;
+      cueEl.className = `train-cue show ${allOk ? 'good' : lastRep.correct ? 'warn' : 'bad'}`;
+    } else if (body && (s.phase === 'prep' || s.phase === 'strike' || s.phase === 'announce')) {
+      const cue = worstPostureCue(body);
       cueEl.textContent = cue.level === 'good' ? '✓ Postura lista' : cue.cue;
       cueEl.className = `train-cue show ${cue.level}`;
     } else {

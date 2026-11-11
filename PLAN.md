@@ -1,7 +1,7 @@
 # Pádel Cam — Plan técnico y hoja de ruta
 
 *Documento de traspaso para agentes/modelos que continúen el desarrollo.
-Última actualización: octubre 2026, rama `master` (la rama
+Última actualización: noviembre 2026, rama `master` (la rama
 `claude/game-immersion-features-kyqihy` se fusionó en agosto).
 Contexto de producto: ver `PRODUCT.md`. Contexto de usuario: ver `README.md`.*
 
@@ -32,6 +32,30 @@ Contexto de producto: ver `PRODUCT.md`. Contexto de usuario: ver `README.md`.*
   "frente falso"), pala en alto en espera, brazos visibles a los costados,
   anillos de identidad bajo los jugadores (referencia Premier Padel),
   repetición a cámara lenta saltable con cualquier tecla.
+
+### Fusión de noviembre 2026: dos líneas de desarrollo unidas
+El 23-oct-2026 otra herramienta reescribió `master` en GitHub desde una base
+de julio (commit `5ea4e63`), dejando fuera 20 commits (legal, PWA, cuentas,
+online v2, pose en vivo, workflows). Esta rama los une con lo que aportó esa
+versión. Qué manda en cada pieza tras la fusión:
+- **Diseño y pantallas**: la versión de GitHub ("Dark Tech Sport", Athlete
+  Pass, Padel Rating 1.00-7.00, Calentamiento Express, Ficha Técnica PNG en
+  `src/ui/shareCard.ts`). Sobre ella se restauraron, con ese mismo lenguaje
+  visual: bienvenida, perfil/avatar, nube, pie legal, cuenta atrás grande,
+  marcador con nombres, meta diaria, invitación/revancha online y retos.
+- **Entrenamiento técnico**: `session.ts`/`view.ts`/`metrics.ts` de GitHub
+  (biomecánica: perfilado de hombros, mano guía, pilares, voz del coach) +
+  golpes que rotan por repetición (mixto, voleas), zona de impacto variable
+  y bola que entra desde el fondo con origen aleatorio.
+- **Red, partido, cámara y `main.ts`**: la línea local (online v2, pose en
+  vivo, `closeSession()`); el detector de golpes único es
+  `src/camera/swingDetector.ts` (`WristSwingDetector`).
+- **Padel Rating provisional**: converge desde 1.50 al valor medido a lo
+  largo de 12 sesiones (`RATING_SETTLE_SESSIONS`); antes una sola sesión de
+  3 minutos daba un 4.3 ("Jugador de Club").
+- Respaldo de la línea local previa: rama `rescate/master-local-2026-10-10`.
+- **Regla nueva**: antes de trabajar, `git fetch` y comprobar que el `master`
+  local no ha divergido del remoto. Nunca forzar `master`.
 
 ### Añadido en octubre 2026 (verificado con Playwright, sin cámara real)
 - **Pose en vivo**: con cámara, los brazos del avatar siguen a los brazos
@@ -190,7 +214,7 @@ src/
       threeRenderer.ts  Spike WebGL (experimental)
   camera/
     pose.ts          PoseTracker (MediaPipe, CDN en runtime) + wake lock
-    swing.ts         SwingDetector: detección de golpe, compartida por todos
+    swingDetector.ts WristSwingDetector: detección de golpe, compartida por todos
     gestures.ts      CameraControl: caderas→posición, golpes y pose en vivo
     calibration.ts   Calibración con cuenta atrás y arranque automático
   training/

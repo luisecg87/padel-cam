@@ -1,14 +1,31 @@
 import { sfx } from '../audio/sfx';
+import {
+  BIOMECHANIC_LABELS,
+  DAILY_BONUS_XP,
+  DAILY_GOAL,
+  calculatePadelRating,
+  formatRatingDelta,
+  summarize,
+} from '../analysis/progress';
 import { RIVALS, ROUND_NAMES, TOURNEY_GAMES } from '../modes/tournament';
 import type { Report } from '../analysis/coach';
-import { DAILY_BONUS_XP, DAILY_GOAL } from '../analysis/progress';
-import type { ChallengeRecord, Correction, DrillSuggestion, ProgressSummary, SavedSession, XpInfo } from '../analysis/progress';
+import type {
+  BiomechanicKey,
+  ChallengeRecord,
+  Correction,
+  DrillSuggestion,
+  PadelRatingInfo,
+  ProgressSummary,
+  SavedSession,
+  XpInfo,
+} from '../analysis/progress';
 import type { ChallengeDef, ChallengeResult } from '../modes/challenges';
 import type { TrainingSummary } from '../training/session';
-import { SHOT_NAMES } from '../types';
+import type { ControlMode, Difficulty, DrillType, ShotType } from '../types';
 import { KITS, SKINS, loadProfile, saveProfile } from '../profile';
 import type { PlayerProfile } from '../profile';
-import type { ControlMode, Difficulty, DrillType } from '../types';
+import { shareTechnicalCard } from './shareCard';
+import type { ShareCardData } from './shareCard';
 
 export interface MenuSettings {
   control: ControlMode;
@@ -18,6 +35,7 @@ export interface MenuSettings {
 
 type ScreenId =
   | 'welcome'
+  | 'full'
   | 'menu'
   | 'calib'
   | 'report'
@@ -27,7 +45,6 @@ type ScreenId =
   | 'trainSummary'
   | 'challenges'
   | 'challengeEnd'
-  | 'full'
   | 'none';
 
 const WELCOME_SEEN_KEY = 'padelcam_seen_welcome_v1';
@@ -64,6 +81,7 @@ export async function shareLink(text: string, url: string): Promise<ShareOutcome
 
 const AGAIN_LABEL = 'Jugar otra vez';
 
+
 const $ = <T extends HTMLElement = HTMLElement>(sel: string): T => {
   const el = document.querySelector<T>(sel);
   if (!el) throw new Error(`No existe el elemento ${sel}`);
@@ -76,6 +94,8 @@ class UI {
 
   onProfileChange: ((p: PlayerProfile) => void) | null = null;
   onWelcomeDone: (() => void) | null = null;
+  onOnlineShare: (() => void) | null = null;
+  onChallengeShare: (() => void) | null = null;
   onStartMatch: (() => void) | null = null;
   onStartPractice: (() => void) | null = null;
   onQuit: (() => void) | null = null;
@@ -92,10 +112,10 @@ class UI {
   onOnlineHost: (() => void) | null = null;
   onOnlineJoin: ((code: string) => void) | null = null;
   onOnlineBack: (() => void) | null = null;
-  onOnlineShare: (() => void) | null = null;
-  onChallengeShare: (() => void) | null = null;
   onStartTraining: (() => void) | null = null;
+  onStartExpressWarmup: (() => void) | null = null;
   onTrainAgain: (() => void) | null = null;
+  onTrainRecommended: ((shot: ShotType, drill: DrillType) => void) | null = null;
   onShowChallenges: (() => void) | null = null;
   onPlayChallenge: ((id: string) => void) | null = null;
   onChallengeAgain: (() => void) | null = null;
@@ -103,6 +123,9 @@ class UI {
   private toastTimer: number | null = null;
   private shotChipTimer: number | null = null;
   private tourneyPhase: TourneyPhase = 'play';
+  private recommendedTarget: { shot: ShotType; drill: DrillType } | null = null;
+  private lastSummaryShareData: ShareCardData | null = null;
+  private lastProgressShareData: ShareCardData | null = null;
 
   init(): void {
     this.wireOptionRow('#controlRow', 'control', 'control');
@@ -112,12 +135,14 @@ class UI {
     this.initWelcome();
 
     // Recuerda el control elegido en visitas anteriores y persiste los cambios
-    // del toggle del menú (los usuarios recurrentes cambian de método ahí).
+    // (menú y pantalla online comparten el mismo selector).
     this.selectControl(this.profile.control);
-    $('#controlRow')
-      .querySelectorAll<HTMLButtonElement>('.opt')
+    document
+      .querySelectorAll<HTMLButtonElement>('#controlRow .opt, #onlineControlRow .opt')
       .forEach((b) => b.addEventListener('click', () =>
         this.selectControl(b.dataset.control === 'keyboard' ? 'keyboard' : 'camera')));
+    $('#btnOnlineShare').addEventListener('click', () => this.onOnlineShare?.());
+    $('#btnChallengeShare').addEventListener('click', () => this.onChallengeShare?.());
 
     $('#btnMatch').addEventListener('click', () => this.onStartMatch?.());
     $('#btnPractice').addEventListener('click', () => this.onStartPractice?.());
@@ -148,16 +173,22 @@ class UI {
       else this.setOnlineStatus('Escribe el código de 4 letras de la partida', 'err');
     });
     $('#btnOnlineBack').addEventListener('click', () => this.onOnlineBack?.());
-    $('#btnOnlineShare').addEventListener('click', () => this.onOnlineShare?.());
-    $('#btnChallengeShare').addEventListener('click', () => this.onChallengeShare?.());
-    // El invitado por enlace llega directo a esta pantalla: tiene que poder
-    // elegir cámara o teclado aquí, sin pasar por el menú.
-    $('#onlineControlRow')
-      .querySelectorAll<HTMLButtonElement>('.opt')
-      .forEach((b) => b.addEventListener('click', () =>
-        this.selectControl(b.dataset.control === 'keyboard' ? 'keyboard' : 'camera')));
+    $('#btnExpressWarmup').addEventListener('click', () => this.onStartExpressWarmup?.());
     $('#btnTraining').addEventListener('click', () => this.onStartTraining?.());
     $('#btnTrainAgain').addEventListener('click', () => this.onTrainAgain?.());
+    $('#btnTrainRecommended').addEventListener('click', () => {
+      if (this.recommendedTarget) {
+        this.onTrainRecommended?.(this.recommendedTarget.shot, this.recommendedTarget.drill);
+      } else {
+        this.onTrainAgain?.();
+      }
+    });
+    $('#btnShareSummary').addEventListener('click', () => {
+      if (this.lastSummaryShareData) void this.triggerShareCard(this.lastSummaryShareData, '#btnShareSummary');
+    });
+    $('#btnShareProgress').addEventListener('click', () => {
+      if (this.lastProgressShareData) void this.triggerShareCard(this.lastProgressShareData, '#btnShareProgress');
+    });
     $('#btnTrainMenu').addEventListener('click', () => this.show('menu'));
     $('#btnChallenges').addEventListener('click', () => this.onShowChallenges?.());
     $('#btnChallengesBack').addEventListener('click', () => this.show('menu'));
@@ -191,6 +222,16 @@ class UI {
     $('#menuHint').textContent = isTouch
       ? 'Táctil: lado izquierdo para moverte, toca el lado derecho para golpear (zona alta de la pantalla = remate).'
       : 'Teclado: flechas o WASD para moverte · ESPACIO golpea (←/→ dirigen). Con globo: ESPACIO = bandeja · ↑+ESPACIO = remate · ←/→+ESPACIO = víbora.';
+  }
+
+  private async triggerShareCard(data: ShareCardData, btnSel: string): Promise<void> {
+    try {
+      const res = await shareTechnicalCard(data);
+      if (res === 'downloaded') this.flashButton(btnSel, '📥 Ficha descargada (PNG)');
+      else if (res === 'shared') this.flashButton(btnSel, '✅ Ficha compartida');
+    } catch {
+      this.flashButton(btnSel, '⚠️ No se pudo compartir');
+    }
   }
 
   private wireOptionRow(rowSel: string, dataKey: string, settingKey: keyof MenuSettings): void {
@@ -395,7 +436,7 @@ class UI {
       .forEach((b) => b.classList.toggle('selected', b.dataset.drill === drill));
   }
 
-  /** Tarjeta "entrenamiento del día" del menú: racha + drill sugerido. */
+  /** Tarjeta del menú: Padel Rating prominente + racha + consistencia acumulada + drill sugerido. */
   setCoach(
     summary: ProgressSummary,
     suggestion: DrillSuggestion | null,
@@ -403,42 +444,70 @@ class UI {
     xp: XpInfo | null = null,
   ): void {
     const card = $('#coachCard');
-    if (summary.totalSessions === 0 && (!xp || xp.xp === 0)) {
-      card.hidden = true;
-      return;
-    }
     card.hidden = false;
+
+    const ratingInfo = xp ? calculatePadelRating(summary, xp) : summary.padelRating;
+    $('#coachPadelRating').textContent = ratingInfo.formatted;
+    $('#coachPadelCategory').textContent = ratingInfo.category;
+
+    // Consistencia 0-100 en anillo
+    const cons = summary.overallConsistency;
+    const consCol = cons >= 75 ? 'var(--cyan)' : cons >= 50 ? 'var(--warn)' : 'var(--bad)';
+    $('#coachConsVal').textContent = cons > 0 ? `${cons}` : '—';
+    $('#coachConsVal').style.color = cons > 0 ? consCol : '';
+    $('#coachConsRing').style.background =
+      `conic-gradient(${cons > 0 ? consCol : 'transparent'} ${cons * 3.6}deg, rgba(255,255,255,.08) 0deg)`;
+
+    // Racha + nivel XP + estado técnico
+    $('#coachStreakVal').textContent = `${summary.streakDays}`;
+    $('#coachXpLevel').textContent = xp && xp.xp > 0 ? `${xp.level}` : '—';
+    const stateEl = $('#coachState');
+    if (summary.dominantFault) {
+      stateEl.textContent = BIOMECHANIC_LABELS[summary.dominantFault];
+      stateEl.dataset.state = 'warn';
+    } else if (cons >= 75) {
+      stateEl.textContent = 'Óptimo';
+      stateEl.dataset.state = 'good';
+    } else if (summary.totalSessions > 0) {
+      stateEl.textContent = 'En progreso';
+      stateEl.dataset.state = cons > 0 && cons < 50 ? 'bad' : 'none';
+    } else {
+      stateEl.textContent = 'Sin evaluar';
+      stateEl.dataset.state = 'none';
+    }
+
     if (xp && xp.xp > 0) {
-      $('#coachLevel').textContent = `Nivel ${xp.level} · ${xp.title}`;
+      $('#coachLevel').textContent = `${xp.title} · ${xp.levelXp} / ${xp.levelSize} XP`;
       $('#coachXpFill').style.width = `${Math.round((xp.levelXp / xp.levelSize) * 100)}%`;
       ($('#coachXpBar') as HTMLElement).style.display = 'block';
     } else {
-      $('#coachLevel').textContent = '';
+      $('#coachLevel').textContent = 'Completa un Calentamiento Express o una sesión técnica para activar tu pase';
       ($('#coachXpBar') as HTMLElement).style.display = 'none';
     }
-    const fire = summary.streakDays >= 3 ? '🔥🔥' : '🔥';
-    const cup = trophies > 0 ? `🏆 ${trophies} · ` : '';
+    const cup = trophies > 0 ? `${trophies} ${trophies === 1 ? 'trofeo' : 'trofeos'} · ` : '';
     $('#coachStreak').textContent =
       cup +
       (summary.streakDays > 0
-        ? `${fire} Racha: ${summary.streakDays} ${summary.streakDays === 1 ? 'día' : 'días'} entrenando` +
-          (summary.trainedToday ? ' · ¡hoy ya cuenta!' : ' · entrena hoy para no perderla')
+        ? summary.trainedToday
+          ? 'Hoy ya cuenta para tu racha'
+          : 'Entrena hoy para no perder la racha'
         : `${summary.totalSessions} sesiones guardadas · entrena hoy para empezar una racha`);
     // Meta diaria: un objetivo corto y cerrable que da motivo para "una más"
     const goal = $('#coachGoal');
     const done = Math.min(summary.sessionsToday, DAILY_GOAL);
     goal.classList.toggle('done', done >= DAILY_GOAL);
-    goal.textContent =
-      done >= DAILY_GOAL
-        ? `✅ Meta de hoy cumplida (${DAILY_GOAL}/${DAILY_GOAL})`
-        : `🎯 Meta de hoy: ${'●'.repeat(done)}${'○'.repeat(DAILY_GOAL - done)} ${done}/${DAILY_GOAL} sesiones · bonus +${DAILY_BONUS_XP} XP`;
+    goal.innerHTML =
+      `<span class="goal-dots">${'<i class="on"></i>'.repeat(done)}${'<i></i>'.repeat(DAILY_GOAL - done)}</span>` +
+      (done >= DAILY_GOAL
+        ? `<span>Meta de hoy cumplida</span>`
+        : `<span>Meta de hoy · ${done}/${DAILY_GOAL} sesiones</span><b>+${DAILY_BONUS_XP} XP</b>`);
     const tip = $('#coachTip');
     const btn = $('#btnCoachTrain') as HTMLButtonElement;
     if (suggestion) {
-      tip.textContent = `🧑‍🏫 ${suggestion.reason}`;
+      tip.textContent = suggestion.reason;
       btn.hidden = false;
     } else {
-      tip.textContent = '🧑‍🏫 Sin correcciones pendientes: ¡a por un partido!';
+      tip.textContent = 'Lanza el Calentamiento Express (3 min) o un partido para evaluar tu nivel.';
       btn.hidden = true;
     }
   }
@@ -632,10 +701,13 @@ class UI {
       )
       .join('');
     $('#reportTips').innerHTML = report.tips
-      .map((t) => `<div class="tip${t.warn ? ' warn' : ''}">${t.warn ? '⚠️' : '✅'} ${t.text}</div>`)
+      .map(
+        (t) =>
+          `<div class="tip${t.warn ? ' warn' : ''}"><span class="tip-tag">${t.warn ? 'AJUSTE' : 'BIEN'}</span><span>${t.text}</span></div>`,
+      )
       .join('');
     const parts = [
-      saved ? '💾 Informe guardado en «Mi progresión»' : '',
+      saved ? 'Informe guardado en «Mi progresión»' : '',
       xpNote,
     ].filter(Boolean);
     $('#reportSaved').textContent = parts.join(' · ');
@@ -682,17 +754,46 @@ class UI {
     this.show('challengeEnd');
   }
 
-  /** TrainingSessionSummary: resumen visual de la sesión de técnica. */
-  showTrainingSummary(s: TrainingSummary, xpGained = 0): void {
+  /** TrainingSessionSummary: resumen visual de la sesión con Padel Rating, desglose biomecánico, Diagnóstico del Coach y Ficha Técnica. */
+  showTrainingSummary(
+    s: TrainingSummary,
+    xpGained = 0,
+    overallConsistency?: number,
+    padelRating?: PadelRatingInfo,
+    ratingDelta = 0,
+    streakDays = 1,
+  ): void {
+    const titleLabel = s.label.toUpperCase();
     $('#tsShot').textContent =
-      `SESIÓN · ${s.label.toUpperCase()}` + (xpGained > 0 ? ` · +${xpGained} XP` : '');
+      `SESIÓN · ${titleLabel}` + (xpGained > 0 ? ` · +${xpGained} XP` : '');
     $('#tsReps').textContent = `${s.reps.length}`;
     $('#tsCorrect').textContent = `${s.correct}`;
     $('#tsStreak').textContent = `${s.bestStreak}`;
-    $('#tsTiming').textContent =
-      s.meanDtMs === null ? '—' : `${s.meanDtMs > 0 ? '+' : ''}${s.meanDtMs} ms`;
+    $('#tsTiming').textContent = s.meanDtMs === null ? '—' : `${s.meanDtMs > 0 ? '+' : ''}${s.meanDtMs}`;
 
-    // Gauge de consistencia (anillo conic-gradient, color por estado)
+    // Padel Rating y su variación tras la sesión (ej. +0.08 ▲)
+    const pRating: PadelRatingInfo =
+      padelRating ??
+      calculatePadelRating({
+        totalSessions: 1,
+        streakDays,
+        overallConsistency: overallConsistency ?? s.consistency,
+        biomechanics: s.biomechanics,
+        pillars: s.pillars,
+      });
+    $('#tsPadelRating').textContent = pRating.formatted;
+    $('#tsPadelCat').textContent = pRating.category;
+
+    const deltaInfo = formatRatingDelta(ratingDelta);
+    const deltaEl = $('#tsPadelDelta');
+    deltaEl.textContent = deltaInfo.text;
+    deltaEl.className = `ts-rating-delta ${deltaInfo.dir}`;
+
+    // Puntuación de consistencia técnica general acumulada en el historial (0..100)
+    const overall = overallConsistency ?? s.consistency;
+    $('#tsOverallBadge').textContent = `Consistencia acumulada · ${overall} / 100`;
+
+    // Gauge de consistencia de la sesión (anillo conic-gradient, color por estado)
     const pct = s.consistency;
     const col = pct >= 75 ? 'var(--tr-good)' : pct >= 50 ? 'var(--tr-warn)' : 'var(--tr-bad)';
     const gauge = $('#tsGauge');
@@ -701,16 +802,73 @@ class UI {
     gv.textContent = `${pct}%`;
     gv.style.color = col;
 
+    // 1. Telemetría biomecánica: % de golpes limpios por pilar (rodillas, hombros, mano guía, armado, pies, timing)
+    // Pilares mostrados, en orden fijo (el desglose trae además campos auxiliares)
+    const BIO_ROWS: Array<{ k: BiomechanicKey | 'shoulderTurn'; label: string }> = [
+      { k: 'knees', label: BIOMECHANIC_LABELS.knees },
+      { k: 'shoulderTurn', label: 'Hombros' },
+      { k: 'prep', label: BIOMECHANIC_LABELS.prep },
+      { k: 'stance', label: 'Pies' },
+      { k: 'timing', label: BIOMECHANIC_LABELS.timing },
+    ];
+    const bioKeys = BIO_ROWS.filter((r) => typeof s.biomechanics[r.k] === 'number');
+    const totalReps = Math.max(s.reps.length, 1);
+    const bioGrid = $('#tsBioGrid');
+    bioGrid.dataset.count = `${bioKeys.length}`;
+    bioGrid.innerHTML = bioKeys
+      .map(({ k, label }) => {
+        const faults = s.biomechanics[k] ?? 0;
+        const isDom = s.dominantFault === k && faults > 0;
+        const cls = isDom || faults >= 3 ? 'bad' : faults > 0 ? 'warn' : 'good';
+        const clean = Math.max(0, Math.round(((totalReps - faults) / totalReps) * 100));
+        const state = cls === 'good' ? 'Óptimo' : cls === 'warn' ? 'Ajustar' : isDom ? 'Prioridad' : 'Error';
+        const faultsTxt = faults === 0 ? 'sin fallos' : `${faults} ${faults === 1 ? 'fallo' : 'fallos'}`;
+        return `<div class="ts-bio-item ${cls}"><div class="bio-top"><span class="bio-name">${label}</span><span class="bio-dot"></span></div><span class="bio-val">${clean}<small>%</small></span><div class="bio-meter"><i style="width:${clean}%"></i></div><div class="bio-state"><b>${state}</b><span>${faultsTxt}</span></div></div>`;
+      })
+      .join('');
+
     this.drawTimingChart($('#tsChart') as HTMLCanvasElement, s);
 
-    // TrainingInsightCard: error principal + recomendación
+    // 3. Tarjeta destacada: Diagnóstico del Coach + recomendación directa del ejercicio
+    const cc = s.coachCard;
+    const badgeCls = cc.dominantFault === null ? 'good' : '';
+    $('#tsCoachCard').innerHTML = `
+      <div class="ts-coach-head">
+        <span class="ts-coach-title">Diagnóstico del Coach</span>
+        <span class="ts-coach-badge ${badgeCls}">${cc.badgeText}</span>
+      </div>
+      <p class="ts-coach-diag">${cc.diagnosis}</p>
+      <div class="ts-coach-drill">
+        <span class="drill-k">EJERCICIO RECOMENDADO</span>
+        <b>${cc.exerciseName}</b>
+        <span>${cc.exerciseReason}</span>
+      </div>
+    `;
+
+    this.recommendedTarget = { shot: cc.targetShot, drill: cc.targetDrill };
+    const recBtn = $('#btnTrainRecommended') as HTMLButtonElement;
+    recBtn.classList.add('coach-cta');
+    recBtn.innerHTML = `<span><span class="cta-k">ENTRENAR AHORA</span><span class="cta-v">${cc.exerciseName}</span></span><span class="cta-arrow">→</span>`;
+
+    // Preparar datos de la Ficha Técnica Compartible para esta sesión
+    this.lastSummaryShareData = {
+      padelRating: pRating,
+      ratingDelta,
+      streakDays: Math.max(1, streakDays),
+      consistency: s.consistency,
+      sessionTitle: titleLabel,
+      pillars: s.pillars,
+      coachBadge: cc.badgeText,
+      coachDiagnosis: cc.diagnosis,
+      coachExercise: cc.exerciseName,
+      playerName: this.profile.name,
+    };
+
+    // Tarjetas adicionales si hay nota de seguimiento
     const cards: string[] = [];
     if (s.mainIssue) {
-      cards.push(
-        `<div class="ts-insight warn"><b>A CORREGIR</b>${s.mainIssue.text}</div>`,
-      );
+      cards.push(`<div class="ts-insight warn"><b>REGISTRADO EN TU HISTORIAL</b>${s.mainIssue.text}</div>`);
     }
-    cards.push(`<div class="ts-insight"><b>PRÓXIMA SESIÓN</b>${s.recommendation}</div>`);
     $('#tsInsights').innerHTML = cards.join('');
 
     this.show('trainSummary');
@@ -738,10 +896,10 @@ class UI {
     const yOf = (ms: number): number => midY - (Math.max(-maxMs, Math.min(maxMs, ms)) / maxMs) * (H / 2 - 12);
 
     // Banda de ventana ideal ±150 ms
-    ctx.fillStyle = 'rgba(255,255,255,0.06)';
+    ctx.fillStyle = 'rgba(0,245,212,0.07)';
     ctx.fillRect(padL, yOf(150), W - padL - padR, yOf(-150) - yOf(150));
     // Línea base 0
-    ctx.strokeStyle = 'rgba(255,255,255,0.35)';
+    ctx.strokeStyle = 'rgba(255,255,255,0.28)';
     ctx.lineWidth = 1;
     ctx.beginPath();
     ctx.moveTo(padL, midY);
@@ -773,7 +931,7 @@ class UI {
         return;
       }
       const abs = Math.abs(r.dtMs);
-      const color = abs <= 150 ? '#34d399' : abs <= 350 ? '#fbbf24' : '#f87171';
+      const color = abs <= 150 ? '#00F5D4' : abs <= 350 ? '#F59E0B' : '#FF3B5C';
       const y = yOf(r.dtMs);
       const top = Math.min(y, midY);
       const h = Math.max(Math.abs(y - midY), 3);
@@ -783,8 +941,8 @@ class UI {
       ctx.fill();
       // Etiqueta directa solo en la peor desviación (selectiva)
       if (i === maxIdx && abs > 150) {
-        ctx.fillStyle = 'rgba(255,255,255,0.75)';
-        ctx.font = '10px "Segoe UI", sans-serif';
+        ctx.fillStyle = 'rgba(238,242,248,0.85)';
+        ctx.font = '700 11px "Space Grotesk", "Segoe UI", sans-serif';
         ctx.textAlign = 'center';
         const ly = r.dtMs > 0 ? top - 4 : top + h + 11;
         ctx.fillText(`${r.dtMs > 0 ? '+' : ''}${r.dtMs} ms`, cx, ly);
@@ -793,8 +951,45 @@ class UI {
   }
 
   showProgress(sessions: SavedSession[], corrections: Correction[], trophies = 0): void {
-    $('#progressTrophies').textContent =
-      trophies > 0 ? `🏆 Torneos ganados: ${trophies}` : '';
+    const summary = summarize(sessions);
+    const pRating = summary.padelRating;
+    $('#progressPadelRating').textContent = pRating.formatted;
+    $('#progressPadelCat').textContent = pRating.category;
+    $('#progressStreakBadge').textContent = `Racha ${summary.streakDays} ${
+      summary.streakDays === 1 ? 'día' : 'días'
+    }`;
+
+    const metaParts: string[] = [];
+    if (trophies > 0) metaParts.push(`Torneos ganados: ${trophies}`);
+    if (summary.overallConsistency > 0) {
+      metaParts.push(`Consistencia técnica: ${summary.overallConsistency} / 100`);
+    }
+    if (summary.dominantFault) {
+      metaParts.push(`Foco: ${BIOMECHANIC_LABELS[summary.dominantFault]}`);
+    }
+    $('#progressTrophies').textContent = metaParts.join(' · ');
+
+    // Configurar datos de Ficha Técnica para compartir desde Progreso
+    const topCorrection = corrections[0];
+    this.lastProgressShareData = {
+      padelRating: pRating,
+      ratingDelta: null,
+      streakDays: summary.streakDays,
+      consistency: summary.overallConsistency > 0 ? summary.overallConsistency : 65,
+      sessionTitle: `PERFIL GLOBAL · ${summary.totalSessions} SESIONES`,
+      pillars: summary.pillars,
+      coachBadge: summary.dominantFault
+        ? `FOCO · ${BIOMECHANIC_LABELS[summary.dominantFault].toUpperCase()}`
+        : 'PROGRESIÓN SÓLIDA',
+      coachDiagnosis:
+        topCorrection?.text ??
+        'Has construido una base biomecánica equilibrada. Mantén la racha diaria con el Calentamiento Express para seguir subiendo tu Padel Rating.',
+      coachExercise: summary.dominantFault
+        ? `Reforzar ${BIOMECHANIC_LABELS[summary.dominantFault].toLowerCase()} en entrenamiento técnico`
+        : 'Calentamiento Express (3 min) + Partido vs IA',
+      playerName: this.profile.name,
+    };
+
     const cEl = $('#progressCorrections');
     if (corrections.length === 0) {
       cEl.innerHTML =
@@ -804,9 +999,11 @@ class UI {
         .slice(0, 6)
         .map(
           (c) =>
-            `<div class="tip${c.active ? ' warn' : ''}"><b>${
-              c.active ? '📌 Pendiente' : '✅ Sin repetir últimamente'
-            }</b> · vista en ${c.count} ${c.count === 1 ? 'sesión' : 'sesiones'}<br>${c.text}</div>`,
+            `<div class="tip${c.active ? ' warn' : ''}"><span class="tip-tag">${
+              c.active ? 'PENDIENTE' : 'SUPERADA'
+            }</span><span><small class="tip-meta">Vista en ${c.count} ${
+              c.count === 1 ? 'sesión' : 'sesiones'
+            }</small>${c.text}</span></div>`,
         )
         .join('');
     }
@@ -829,9 +1026,7 @@ class UI {
             .slice(0, 3)
             .map((st) => `${esc(st.lbl)}: <b>${esc(st.val)}</b>`)
             .join(' · ');
-          return `<div class="session-card"><div class="session-head"><span>${
-            s.mode === 'match' ? '🏆' : '🎯'
-          } ${esc(s.title)}</span><span class="session-date">${fmt.format(
+          return `<div class="session-card"><div class="session-head"><span>${esc(s.title)}</span><span class="session-date">${fmt.format(
             new Date(s.date),
           )}</span></div><div class="session-stats">${stats}</div></div>`;
         })

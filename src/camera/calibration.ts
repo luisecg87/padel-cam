@@ -88,7 +88,7 @@ export function runCalibration(
               return;
             }
             const secs = Math.ceil(remaining);
-            ui.setCalibStatus('✅ ¡Te veo! Prepárate…', 'ok');
+            ui.setCalibStatus('¡Te veo! Prepárate…', 'ok');
             ui.setCalibCountdown(secs);
             sfx.speak(String(secs));
           } else {

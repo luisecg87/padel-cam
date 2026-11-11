@@ -720,30 +720,46 @@ function drillToShots(d: DrillType): { shots: ShotType[]; label: string } {
   return { shots: [d], label: SHOT_NAMES[d] };
 }
 
-async function startTraining(): Promise<void> {
+let lastTrainingWasExpress = false;
+
+/**
+ * Sesión técnica con cámara. `express` = Calentamiento Express (secuencia
+ * fija de 12 golpes en ~3 min); `only` = un golpe concreto (el ejercicio
+ * que recomienda el coach), en vez del drill elegido en el menú.
+ */
+async function startTraining(express = false, only?: ShotType): Promise<void> {
   stopIdle();
+  lastTrainingWasExpress = express;
   const t = await ensureTracker('Iniciando cámara y análisis de pose…', 'vuelve al menú.');
   if (!t) {
     backToMenu();
     return;
   }
   ui.show('none');
-  const { shots, label } = drillToShots(ui.settings.drill);
-  track('entrenamiento_iniciado', { drill: ui.settings.drill });
+  const { shots, label } = only
+    ? { shots: [only], label: SHOT_NAMES[only] }
+    : drillToShots(ui.settings.drill);
+  track('entrenamiento_iniciado', { drill: express ? 'express' : ui.settings.drill });
 
   const view = new CameraTrainingView({
     canvas: trainCanvas,
     tracker: t,
     shots,
     label,
+    express,
     onFinish: (summary: TrainingSummary) => {
       currentTraining = null;
+      const ratingBefore = summarize(loadSessions()).padelRating.rating;
       const timingTxt =
         summary.meanDtMs === null ? '—' : `${summary.meanDtMs > 0 ? '+' : ''}${summary.meanDtMs} ms`;
       const closed = closeSession(
         {
           mode: 'practice',
-          title: `Técnica · ${label}`,
+          title: summary.express ? 'Calentamiento Express (3 min)' : `Técnica · ${summary.label}`,
+          shot: summary.shot,
+          consistency: summary.consistency,
+          biomechanics: summary.biomechanics,
+          pillars: summary.pillars,
           stats: [
             { lbl: 'Consistencia', val: `${summary.consistency}%` },
             { lbl: 'Correctos', val: `${summary.correct} / ${summary.reps.length}` },
@@ -757,12 +773,22 @@ async function startTraining(): Promise<void> {
             { warn: false, text: summary.recommendation },
           ],
         },
-        summary.consistency,
+        summary.express ? summary.consistency * 1.25 : summary.consistency,
       );
       if (closed.leveledUp) sfx.cheer(true);
       ui.setFirstSessionBanner(firstSessionPending);
       firstSessionPending = false;
-      ui.showTrainingSummary(summary, closed.xp);
+      // El Padel Rating se recalcula con la sesión ya guardada: su variación
+      // es la recompensa visible de cada entrenamiento.
+      const after = summarize(loadSessions());
+      ui.showTrainingSummary(
+        summary,
+        closed.xp,
+        after.overallConsistency,
+        after.padelRating,
+        Math.round((after.padelRating.rating - ratingBefore) * 100) / 100,
+        after.streakDays,
+      );
     },
     onQuit: () => {
       currentTraining = null;
@@ -810,7 +836,12 @@ ui.onOnlineJoin = (code) => void joinOnline(code);
 ui.onOnlineBack = backToMenu;
 ui.onOnlineShare = () => void shareInvite();
 ui.onStartTraining = () => void startTraining();
-ui.onTrainAgain = () => void startTraining();
+ui.onStartExpressWarmup = () => void startTraining(true);
+ui.onTrainAgain = () => void startTraining(lastTrainingWasExpress);
+ui.onTrainRecommended = (shot, drill) => {
+  ui.selectDrill(drill);
+  void startTraining(false, shot);
+};
 ui.onShowChallenges = showChallenges;
 ui.onPlayChallenge = (id) => void startChallenge(id as ChallengeId);
 ui.onChallengeAgain = () => void startChallenge(lastChallengeId);

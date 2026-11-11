@@ -1,9 +1,54 @@
-import { SHOT_NAMES } from '../types';
+import { clamp, SHOT_NAMES } from '../types';
 import type { DrillType, ShotType } from '../types';
 import type { Report, Tip } from './coach';
 
 // Historial de sesiones e informes del entrenador, guardado en localStorage
 // para que las correcciones sobrevivan al cierre del navegador.
+
+export type BiomechanicKey = 'knees' | 'prep' | 'stance' | 'timing';
+
+/** Desglose de fallos por tipo de biomecánica en una sesión o acumulado. */
+export interface BiomechanicsBreakdown {
+  knees: number; // flexión de rodillas
+  prep: number; // armado temprano de la pala
+  stance: number; // separación de pies (base)
+  timing: number; // sincronización con el impacto
+  /** Fallos específicos de perfilado de hombros (opcional para retrocompatibilidad). */
+  shoulderTurn?: number;
+  /** Total de repeticiones evaluadas en la sesión (opcional). */
+  totalReps?: number;
+}
+
+/** Porcentaje de dominio (0..100) en los 4 pilares biomecánicos principales. */
+export interface BiomechanicPillars {
+  knees: number;
+  shoulderTurn: number;
+  prep: number;
+  timing: number;
+}
+
+export const BIOMECHANIC_LABELS: Record<BiomechanicKey, string> = {
+  knees: 'Rodillas',
+  prep: 'Armado',
+  stance: 'Separación de pies',
+  timing: 'Timing',
+};
+
+export type PadelRatingCategory =
+  | 'Iniciación'
+  | 'Intermedio Bajo'
+  | 'Jugador de Club'
+  | 'Competición'
+  | 'Pro';
+
+export interface PadelRatingInfo {
+  /** Índice numérico entre 1.00 y 7.00 (escala estándar tipo Playtomic). */
+  rating: number;
+  /** Valor formateado siempre con 2 decimales, ej. "3.45". */
+  formatted: string;
+  /** Categoría descriptiva asociada al nivel. */
+  category: PadelRatingCategory;
+}
 
 export interface SavedSession {
   date: number; // epoch ms
@@ -11,6 +56,14 @@ export interface SavedSession {
   title: string;
   stats: Report['stats'];
   tips: Tip[];
+  /** Puntuación de consistencia técnica de la sesión (0..100). */
+  consistency?: number;
+  /** Desglose de fallos por tipo de biomecánica registrados en la sesión. */
+  biomechanics?: BiomechanicsBreakdown;
+  /** Porcentajes de los pilares biomecánicos de la sesión (0..100). */
+  pillars?: BiomechanicPillars;
+  /** Golpe entrenado en la sesión (si aplica). */
+  shot?: ShotType;
 }
 
 export interface Correction {
@@ -55,6 +108,128 @@ export function clearSessions(): void {
   } catch {
     /* almacenamiento no disponible */
   }
+}
+
+/**
+ * Extrae la puntuación de consistencia (0..100) de una sesión guardada.
+ * Soporta tanto el campo directo `consistency` como estadísticas guardadas ("Consistencia" / "Calidad media").
+ */
+export function extractSessionConsistency(s: SavedSession): number | null {
+  if (typeof s.consistency === 'number' && !Number.isNaN(s.consistency)) {
+    return clamp(Math.round(s.consistency), 0, 100);
+  }
+  for (const st of s.stats) {
+    if (st.lbl === 'Consistencia' || st.lbl === 'Calidad media') {
+      const n = Number.parseFloat(st.val.replace('%', '').trim());
+      if (!Number.isNaN(n)) return clamp(Math.round(n), 0, 100);
+    }
+  }
+  return null;
+}
+
+/**
+ * Calcula la puntuación de consistencia técnica general (0 a 100) acumulada en el historial.
+ * Pondera ligeramente más las sesiones recientes para reflejar la evolución real del jugador.
+ */
+export function calculateOverallConsistency(sessions: SavedSession[]): number {
+  const scores: number[] = [];
+  for (const s of sessions) {
+    const c = extractSessionConsistency(s);
+    if (c !== null) scores.push(c);
+  }
+  if (scores.length === 0) return 0;
+  let weightedSum = 0;
+  let weightTotal = 0;
+  for (let i = 0; i < scores.length; i++) {
+    const weight = 1 + (i / scores.length) * 0.65;
+    weightedSum += scores[i] * weight;
+    weightTotal += weight;
+  }
+  return clamp(Math.round(weightedSum / weightTotal), 0, 100);
+}
+
+/**
+ * Acumula el desglose de fallos biomecánicos (rodillas, armado, separación de pies, timing)
+ * a lo largo del historial y devuelve también el fallo dominante.
+ */
+export function aggregateBiomechanics(sessions: SavedSession[]): {
+  breakdown: BiomechanicsBreakdown;
+  dominantFault: BiomechanicKey | null;
+  totalFaults: number;
+} {
+  const breakdown: BiomechanicsBreakdown = {
+    knees: 0,
+    prep: 0,
+    stance: 0,
+    timing: 0,
+    shoulderTurn: 0,
+    totalReps: 0,
+  };
+  for (const s of sessions) {
+    if (!s.biomechanics) continue;
+    breakdown.knees += s.biomechanics.knees || 0;
+    breakdown.prep += s.biomechanics.prep || 0;
+    breakdown.stance += s.biomechanics.stance || 0;
+    breakdown.timing += s.biomechanics.timing || 0;
+    breakdown.shoulderTurn = (breakdown.shoulderTurn ?? 0) + (s.biomechanics.shoulderTurn ?? s.biomechanics.prep ?? 0);
+    breakdown.totalReps = (breakdown.totalReps ?? 0) + (s.biomechanics.totalReps ?? 10);
+  }
+  const keys: BiomechanicKey[] = ['timing', 'prep', 'knees', 'stance'];
+  let dominantFault: BiomechanicKey | null = null;
+  let maxCount = 0;
+  for (const k of keys) {
+    if (breakdown[k] > maxCount) {
+      maxCount = breakdown[k];
+      dominantFault = k;
+    }
+  }
+  const totalFaults = breakdown.knees + breakdown.prep + breakdown.stance + breakdown.timing;
+  return { breakdown, dominantFault, totalFaults };
+}
+
+/**
+ * Calcula los porcentajes (0..100) de los 4 pilares biomecánicos (Rodillas, Giro de Hombros, Armado, Timing)
+ * a partir del historial de sesiones.
+ */
+export function computeHistoricalPillars(sessions: SavedSession[], overallConsistency = 0): BiomechanicPillars {
+  const withPillars = sessions.filter((s) => !!s.pillars);
+  if (withPillars.length > 0) {
+    const sum = { knees: 0, shoulderTurn: 0, prep: 0, timing: 0 };
+    for (const s of withPillars) {
+      sum.knees += s.pillars!.knees;
+      sum.shoulderTurn += s.pillars!.shoulderTurn;
+      sum.prep += s.pillars!.prep;
+      sum.timing += s.pillars!.timing;
+    }
+    const n = withPillars.length;
+    return {
+      knees: clamp(Math.round(sum.knees / n), 0, 100),
+      shoulderTurn: clamp(Math.round(sum.shoulderTurn / n), 0, 100),
+      prep: clamp(Math.round(sum.prep / n), 0, 100),
+      timing: clamp(Math.round(sum.timing / n), 0, 100),
+    };
+  }
+
+  const bioSessions = sessions.filter((s) => !!s.biomechanics);
+  if (bioSessions.length > 0) {
+    const { breakdown } = aggregateBiomechanics(bioSessions);
+    const totalReps = Math.max(1, breakdown.totalReps || bioSessions.length * 10);
+    const pct = (faults: number) => clamp(Math.round((1 - faults / totalReps) * 100), 0, 100);
+    return {
+      knees: pct(breakdown.knees),
+      shoulderTurn: pct(breakdown.shoulderTurn ?? breakdown.prep),
+      prep: pct(breakdown.prep),
+      timing: pct(breakdown.timing),
+    };
+  }
+
+  const base = overallConsistency > 0 ? overallConsistency : 50;
+  return {
+    knees: base,
+    shoulderTurn: base,
+    prep: base,
+    timing: base,
+  };
 }
 
 /**
@@ -200,7 +375,7 @@ export function saveChallengeResult(
   return { record, isNewBest };
 }
 
-// ---------- Racha y plan del día (bucle de retención) ----------
+// ---------- Racha, Padel Rating (1.00 - 7.00) y plan del día ----------
 
 /** Meta diaria: sesiones al día que dan el bonus (un objetivo corto y cerrable). */
 export const DAILY_GOAL = 3;
@@ -210,7 +385,108 @@ export interface ProgressSummary {
   totalSessions: number;
   streakDays: number; // días consecutivos entrenados (sigue viva si entrenaste ayer)
   trainedToday: boolean;
+  /** Sesiones jugadas hoy (meta diaria). */
   sessionsToday: number;
+  /** Puntuación de consistencia técnica general (0 a 100) acumulada en el historial. */
+  overallConsistency: number;
+  /** Desglose acumulado de fallos biomecánicos en el historial. */
+  biomechanics: BiomechanicsBreakdown;
+  /** Porcentajes acumulados de los 4 pilares biomecánicos. */
+  pillars: BiomechanicPillars;
+  /** Fallo biomecánico dominante en el historial del jugador. */
+  dominantFault: BiomechanicKey | null;
+  /** Escala de Nivel de Pádel real (1.00 a 7.00 estilo Playtomic). */
+  padelRating: PadelRatingInfo;
+}
+
+const RATING_START = 1.5; // nivel de partida sin datos
+const RATING_SETTLE_SESSIONS = 12; // sesiones hasta que el rating refleja del todo lo medido
+
+export function categoryForPadelRating(rating: number): PadelRatingCategory {
+  if (rating < 2.2) return 'Iniciación';
+  if (rating < 3.4) return 'Intermedio Bajo';
+  if (rating < 4.6) return 'Jugador de Club';
+  if (rating < 5.8) return 'Competición';
+  return 'Pro';
+}
+
+/**
+ * Traduce la consistencia técnica, experiencia (sesiones, racha, XP) y precisión
+ * biomecánica en un índice numérico de `1.00` a `7.00` con dos decimales (ej. `3.45`)
+ * y su categoría ("Iniciación", "Intermedio Bajo", "Jugador de Club", "Competición", "Pro").
+ */
+export function calculatePadelRating(
+  summary: Pick<
+    ProgressSummary,
+    'totalSessions' | 'streakDays' | 'overallConsistency' | 'biomechanics'
+  > & { pillars?: BiomechanicPillars },
+  xpInfo?: XpInfo,
+): PadelRatingInfo {
+  const xp = xpInfo?.xp ?? getXp().xp;
+
+  if (summary.totalSessions === 0 && xp <= 0) {
+    return {
+      rating: 1.5,
+      formatted: '1.50',
+      category: 'Iniciación',
+    };
+  }
+
+  // 1. Consistencia técnica (0..100) -> aporta hasta 3.40 puntos sobre la base 1.00
+  const effectiveConsistency =
+    summary.overallConsistency > 0 ? summary.overallConsistency : summary.totalSessions > 0 ? 52 : 25;
+  const consistencyScore = (clamp(effectiveConsistency, 0, 100) / 100) * 3.4;
+
+  // 2. Precisión biomecánica en los pilares -> aporta hasta 1.10 puntos
+  const b = summary.biomechanics;
+  const totalFaults = (b.knees || 0) + (b.prep || 0) + (b.stance || 0) + (b.timing || 0);
+  let bioRatio = effectiveConsistency / 100;
+  if (summary.pillars) {
+    bioRatio =
+      (summary.pillars.knees +
+        summary.pillars.shoulderTurn +
+        summary.pillars.prep +
+        summary.pillars.timing) /
+      400;
+  } else if (totalFaults > 0 || (b.totalReps ?? 0) > 0) {
+    const totalChecks = Math.max(16, (b.totalReps || summary.totalSessions * 10) * 4);
+    bioRatio = clamp(1 - totalFaults / totalChecks, 0, 1);
+  }
+  const bioScore = clamp(bioRatio, 0, 1) * 1.1;
+
+  // 3. Experiencia acumulada (sesiones, racha de días y XP) -> aporta hasta 1.50 puntos
+  const sessionScore = Math.min(1, Math.sqrt(summary.totalSessions / 24)) * 0.85;
+  const streakScore = Math.min(0.3, summary.streakDays * 0.04);
+  const xpScore = Math.min(0.35, Math.sqrt(Math.max(0, xp) / 2200) * 0.35);
+
+  const raw = 1.0 + consistencyScore + bioScore + sessionScore + streakScore + xpScore;
+  // Rating provisional: con pocas sesiones no hay datos para afirmar un nivel
+  // alto. Se parte de 1.50 y se converge al valor medido a lo largo de
+  // RATING_SETTLE_SESSIONS: nadie es "Jugador de Club" tras 3 minutos, y cada
+  // sesión de las primeras mueve el número de forma visible (el gancho).
+  const confidence = Math.min(1, summary.totalSessions / RATING_SETTLE_SESSIONS) ** 0.75;
+  const settled = RATING_START + (raw - RATING_START) * confidence;
+  const rating = clamp(Math.round(settled * 100) / 100, 1.0, 7.0);
+  return {
+    rating,
+    formatted: rating.toFixed(2),
+    category: categoryForPadelRating(rating),
+  };
+}
+
+/** Formatea la variación del Padel Rating tras una sesión (ej. `+0.08 ▲` o `-0.03 ▼`). */
+export function formatRatingDelta(delta: number): {
+  text: string;
+  dir: 'up' | 'down' | 'same';
+} {
+  const rounded = Math.round(delta * 100) / 100;
+  if (rounded > 0.004) {
+    return { text: `+${rounded.toFixed(2)} ▲`, dir: 'up' };
+  }
+  if (rounded < -0.004) {
+    return { text: `${rounded.toFixed(2)} ▼`, dir: 'down' };
+  }
+  return { text: `0.00 =`, dir: 'same' };
 }
 
 export function summarize(sessions: SavedSession[]): ProgressSummary {
@@ -225,7 +501,23 @@ export function summarize(sessions: SavedSession[]): ProgressSummary {
     streakDays++;
     d.setDate(d.getDate() - 1);
   }
-  return { totalSessions: sessions.length, streakDays, trainedToday, sessionsToday };
+  const overallConsistency = calculateOverallConsistency(sessions);
+  const { breakdown: biomechanics, dominantFault } = aggregateBiomechanics(sessions);
+  const pillars = computeHistoricalPillars(sessions, overallConsistency);
+  const baseSummary = {
+    totalSessions: sessions.length,
+    streakDays,
+    trainedToday,
+    sessionsToday,
+    overallConsistency,
+    biomechanics,
+    pillars,
+    dominantFault,
+  };
+  return {
+    ...baseSummary,
+    padelRating: calculatePadelRating(baseSummary),
+  };
 }
 
 export interface DrillSuggestion {
@@ -233,7 +525,7 @@ export interface DrillSuggestion {
   reason: string;
 }
 
-const SHOT_DRILL: Partial<Record<ShotType, DrillType>> = {
+export const SHOT_DRILL: Partial<Record<ShotType, DrillType>> = {
   forehand: 'forehand',
   backhand: 'backhand',
   volleyFh: 'volley',
@@ -246,6 +538,11 @@ const SHOT_DRILL: Partial<Record<ShotType, DrillType>> = {
 const KEY_DRILL: Record<string, DrillSuggestion> = {
   'timing-tarde': { drill: 'mixto', reason: 'Llegas tarde a la bola: afina el timing con golpes variados.' },
   'timing-pronto': { drill: 'mixto', reason: 'Golpeas antes de tiempo: afina el timing con golpes variados.' },
+  'biomec-knees': { drill: 'bandeja', reason: 'Te falta flexión de rodillas: entrena bandeja y defensa baja flexionando piernas.' },
+  'biomec-prep': { drill: 'forehand', reason: 'Armas la pala tarde: entrena la preparación temprana en tu derecha.' },
+  'biomec-stance': { drill: 'volley', reason: 'Base de pies estrecha: entrena voleas manteniendo una postura ancha y estable.' },
+  'preparacion': { drill: 'forehand', reason: 'Falta preparación previa al golpe: trabaja el armado temprano.' },
+  'impacto-zona': { drill: 'forehand', reason: 'El punto de impacto se desvía: entrena la extensión del brazo en derecha.' },
   'llegar-bola': { drill: 'mixto', reason: 'Se te escapan bolas: trabaja el desplazamiento con golpes variados.' },
   'golpes-al-aire': { drill: 'mixto', reason: 'Demasiados golpes al aire: entrena la lectura de bola.' },
   'eleccion-golpe': { drill: 'mixto', reason: 'Confundes qué golpe toca: el drill mixto te obliga a leer cada bola.' },
