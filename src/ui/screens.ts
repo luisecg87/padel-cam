@@ -137,6 +137,17 @@ class UI {
     // Recuerda el control elegido en visitas anteriores y persiste los cambios
     // (menú y pantalla online comparten el mismo selector).
     this.selectControl(this.profile.control);
+    // Vista de juego: primera persona (por defecto) o cámara elevada
+    const viewBtns = document.querySelectorAll<HTMLButtonElement>('#viewRow .opt');
+    const syncView = (): void =>
+      viewBtns.forEach((b) => b.classList.toggle('selected', b.dataset.view === this.profile.view));
+    viewBtns.forEach((b) =>
+      b.addEventListener('click', () => {
+        this.profile.view = b.dataset.view === 'third' ? 'third' : 'first';
+        saveProfile(this.profile);
+        syncView();
+      }));
+    syncView();
     document
       .querySelectorAll<HTMLButtonElement>('#controlRow .opt, #onlineControlRow .opt')
       .forEach((b) => b.addEventListener('click', () =>

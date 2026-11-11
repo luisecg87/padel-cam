@@ -10,7 +10,7 @@ import { ui } from '../ui/screens';
 import { clamp, isOverheadShot, opponent } from '../types';
 import type { SwingForm } from '../ui/input';
 import { CPU_PALETTE } from './render';
-import type { GameRenderer } from './renderers/GameRenderer';
+import type { GameRenderer, ViewMode } from './renderers/GameRenderer';
 import type { Rival } from '../modes/tournament';
 import type { ControlAdapter, LivePose, SwingEvent } from '../ui/input';
 import type { ControlMode, Difficulty, Side, ShotType } from '../types';
@@ -90,6 +90,7 @@ export class MatchMode {
   private pendingReplay = false;
   private finishAfterReplay = false;
   private replayT = 0;
+  private viewBeforeReplay: ViewMode = 'third';
 
   constructor(opts: MatchOptions) {
     this.opts = opts;
@@ -764,6 +765,9 @@ export class MatchMode {
     this.pendingReplay = false;
     this.finishAfterReplay = finishAfter;
     this.state = 'replay';
+    // La repetición se ve desde fuera, como en la tele: ahí sí te ves jugar
+    this.viewBeforeReplay = this.opts.renderer.view;
+    this.opts.renderer.view = 'third';
     this.replayT = 0;
     this.ball.trail.length = 0;
     ui.setReplay(true);
@@ -773,8 +777,9 @@ export class MatchMode {
     this.replayT += dt * REPLAY_SPEED;
     const f = this.frames[Math.floor(this.replayT * 60)];
     if (!f) {
-      // Fin de la repetición: seguir con el partido
+      // Fin de la repetición: seguir con el partido, en la vista del jugador
       ui.setReplay(false);
+      this.opts.renderer.view = this.viewBeforeReplay;
       this.frames.length = 0;
       if (this.finishAfterReplay) {
         this.stop();

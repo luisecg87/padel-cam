@@ -12,6 +12,8 @@ import type { ControlAdapter, SwingEvent } from '../ui/input';
 import type { ControlMode, DrillType, ShotType } from '../types';
 
 const N_BALLS = 10;
+const VOLLEY_Z = 12.6; // posición de red del jugador en el drill de voleas
+const VOLLEY_FEED_SPEED = 13; // m/s: ritmo de peloteo, no de remate
 
 export interface PracticeOptions {
   renderer: GameRenderer;
@@ -83,7 +85,7 @@ export class PracticeMode {
   start(): void {
     this.running = true;
     ui.setHudVisible(true);
-    ui.updateScore('Modo práctica', this.drillLabel());
+    ui.updateScore('Práctica', this.drillLabel());
     ui.setServeInfo('');
     this.updateDrillHud('¡Prepárate!');
     this.lastT = performance.now();
@@ -118,7 +120,7 @@ export class PracticeMode {
     const drill = this.opts.drill;
     if (drill === 'mixto') {
       const pool: ShotType[] = [
-        'forehand', 'backhand', 'volleyFh', 'volleyBh', 'bandeja', 'vibora', 'smash',
+        'forehand', 'backhand', 'volleyFh', 'volleyBh', 'bandeja', 'vibora',
       ];
       this.expected = pool[Math.floor(Math.random() * pool.length)];
     } else if (drill === 'volley') {
@@ -139,11 +141,17 @@ export class PracticeMode {
       }
       case 'volleyFh':
       case 'volleyBh': {
-        // Bola tensa y sin bote, hacia el lado del golpe pedido
+        // Bola de volea real: sale del fondo a ritmo de peloteo y llega a
+        // la posición de red del jugador a la altura del pecho, por su lado
+        // del golpe. (Antes era un remate a 19 m/s apuntado al fondo.)
         const side = this.expected === 'volleyFh' ? 1 : -1;
-        const target = { x: side * (0.8 + Math.random() * 2), z: 16.5 };
-        vel = computeShotVelocity(from, target, 'smash', 0.95);
-        vel.y += 1.2; // que llegue a media altura, no al suelo
+        const reach = { x: side * (0.5 + Math.random() * 1.3), y: 1.15 + Math.random() * 0.35, z: 0 };
+        // Con cámara el juego te sube a la red; con teclado la bola va a donde estés
+        reach.z = this.opts.controlMode === 'camera' ? VOLLEY_Z : this.player.z;
+        const dx = reach.x - from.x;
+        const dz = reach.z - from.z;
+        const t = Math.hypot(dx, dz) / VOLLEY_FEED_SPEED;
+        vel = { x: dx / t, z: dz / t, y: (reach.y - from.y) / t + 0.5 * GRAVITY * t };
         break;
       }
       case 'smash':
@@ -448,7 +456,7 @@ export class PracticeMode {
       this.player.applyMoveInput(move.x, move.z, dt);
     } else {
       // En volea el juego te adelanta a la red; en el resto, según la bola
-      let targetZ = this.isVolleyDrill() && this.phase === 'ball' ? 12.6 : 16.5;
+      let targetZ = this.isVolleyDrill() && this.phase === 'ball' ? VOLLEY_Z : 16.5;
       if (
         this.phase === 'ball' &&
         !this.isVolleyDrill() &&

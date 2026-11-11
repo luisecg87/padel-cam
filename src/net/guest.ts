@@ -7,7 +7,7 @@ import { ui } from '../ui/screens';
 import { buildInputMsg, decodePose, OnlineSession } from './online';
 import type { StateMsg } from './online';
 import type { Palette } from '../game/render';
-import type { GameRenderer } from '../game/renderers/GameRenderer';
+import type { GameRenderer, ViewMode } from '../game/renderers/GameRenderer';
 import type { ControlAdapter } from '../ui/input';
 
 // Vista del invitado: no simula nada. Envía su input al anfitrión y renderiza
@@ -56,6 +56,7 @@ export class GuestMatchView {
   private raf = 0;
   private lastT = 0;
   private running = false;
+  private view: ViewMode = 'third';
 
   constructor(opts: GuestOptions) {
     this.opts = opts;
@@ -77,6 +78,7 @@ export class GuestMatchView {
 
   start(): void {
     this.running = true;
+    this.view = this.opts.renderer.view;
     this.opts.renderer.cpuPalette = this.opts.rivalPalette;
     ui.setHudVisible(true);
     this.showScore([0, 0, 0, 0]);
@@ -192,7 +194,11 @@ export class GuestMatchView {
     }
     if (!prev || prev.serve !== m.serve) ui.setServeInfo(m.serve);
     if ((!prev || prev.toastN !== m.toastN) && m.toast) ui.toast(m.toast, 1600);
-    if (!prev || prev.replay !== m.replay) ui.setReplay(m.replay);
+    if (!prev || prev.replay !== m.replay) {
+      ui.setReplay(m.replay);
+      // La repetición se ve desde fuera; al acabar vuelve la vista del jugador
+      this.opts.renderer.view = m.replay ? 'third' : this.view;
+    }
     this.last = m;
   }
 }

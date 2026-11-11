@@ -485,8 +485,9 @@ button.big.neon-share:hover { background: rgba(0, 245, 212, .08); }
   overflow: hidden;
   font-family: var(--f-display);
   font-weight: 700;
-  font-size: clamp(1.15rem, 4vw, 1.7rem);
+  font-size: clamp(.95rem, 4vw, 1.7rem);
   white-space: nowrap;
+  max-width: calc(100vw - 128px); /* deja sitio a los botones de sonido y salir */
   box-shadow: 0 12px 36px rgba(0, 0, 0, .55);
   font-variant-numeric: tabular-nums;
 }
@@ -1165,3 +1166,8 @@ button.big.neon-share:hover { background: rgba(0, 245, 212, .08); }
 }
 .first-session-banner[hidden] { display: none; }
 button.big[hidden] { display: none; }
+
+@media (max-width: 480px) {
+  #scoreGames { padding: 9px 12px; }
+  #scorePoints { padding: 9px 12px; overflow: hidden; text-overflow: ellipsis; }
+}

@@ -93,6 +93,8 @@ class PerfHud {
 
 export class ThreeRenderer implements GameRenderer {
   cpuPalette: Palette = CPU_PALETTE;
+  /** El spike 3D solo tiene la cámara elevada: la vista se acepta y se ignora. */
+  view: 'first' | 'third' = 'third';
   targetZones: Array<{ x0: number; x1: number; z0: number; z1: number }> = [];
 
   private _playerPalette: Palette = PLAYER_PALETTE;

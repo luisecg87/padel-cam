@@ -9,6 +9,7 @@ export interface PlayerProfile {
   kit: number; // índice en KITS
   skin: number; // índice en SKINS
   control: 'camera' | 'keyboard'; // preferencia de control, recordada entre visitas
+  view: 'first' | 'third'; // vista de juego: primera persona o cámara elevada
 }
 
 /** Equipaciones disponibles (los nuevos SIEMPRE al final: el perfil guarda índices). */
@@ -39,6 +40,7 @@ const DEFAULT_PROFILE: PlayerProfile = {
   kit: 0,
   skin: 0,
   control: 'camera',
+  view: 'first',
 };
 
 export function loadProfile(): PlayerProfile {
@@ -52,6 +54,7 @@ export function loadProfile(): PlayerProfile {
       kit: typeof p.kit === 'number' && KITS[p.kit] ? p.kit : 0,
       skin: typeof p.skin === 'number' && SKINS[p.skin] ? p.skin : 0,
       control: p.control === 'keyboard' ? 'keyboard' : 'camera',
+      view: p.view === 'third' ? 'third' : 'first',
     };
   } catch {
     return { ...DEFAULT_PROFILE };

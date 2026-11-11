@@ -57,6 +57,27 @@ versión. Qué manda en cada pieza tras la fusión:
 - **Regla nueva**: antes de trabajar, `git fetch` y comprobar que el `master`
   local no ha divergido del remoto. Nunca forzar `master`.
 
+### Vista en primera persona (noviembre 2026, por petición del propietario)
+- `Renderer.view` (`'first' | 'third'`, contrato en `GameRenderer.ts`). La
+  elige el jugador en el menú ("Vista", guardada en el perfil; por defecto
+  primera persona). `main.ts` la aplica solo durante el juego: el fondo del
+  menú y las **repeticiones** usan siempre la cámara elevada.
+- En primera persona la cámara son los ojos del jugador (`setCamera` en
+  `render.ts`): sigue su posición, cabecea al correr y **sube la mirada con
+  las bolas altas** (`pitch`). `project()` recorta en el plano cercano.
+- Los brazos y la pala se pintan en primer plano (`drawFirstPersonArms`):
+  con cámara son los brazos reales (`LivePose`); con teclado, una animación
+  propia por golpe (`cannedArms`). Esto sustituye, en esta vista, a la regla
+  "jugador cercano de espaldas": aquí el jugador no se ve a sí mismo.
+- Three.js no implementa la primera persona (acepta `view` y la ignora).
+- **Remate fuera del entrenamiento**: se quitó de los golpes elegibles y de
+  las rotaciones de Mixto (técnica y práctica); el gesto por encima de la
+  cabeza obliga a dejar de mirar la pantalla. En partido sigue pudiendo salir
+  si la bola viene alta y el gesto es fuerte.
+- **Voleas en práctica**: la máquina lanza una bola de peloteo (13 m/s) que
+  llega a la altura del pecho en la posición de red; antes era un remate a
+  19 m/s apuntado al fondo.
+
 ### Añadido en octubre 2026 (verificado con Playwright, sin cámara real)
 - **Pose en vivo**: con cámara, los brazos del avatar siguen a los brazos
   reales del jugador (`LivePose` en `src/ui/input.ts`, lo produce

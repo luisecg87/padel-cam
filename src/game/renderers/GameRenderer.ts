@@ -10,7 +10,12 @@ import type { Vec3 } from '../../types';
  * clase concreta — así se puede cambiar de renderer sin tocar ninguna
  * lógica de juego.
  */
+/** Desde dónde se ve la pista: los ojos del jugador o la cámara elevada. */
+export type ViewMode = 'first' | 'third';
+
 export interface GameRenderer {
+  /** Vista activa. Los renderers que no soporten primera persona la ignoran. */
+  view: ViewMode;
   /** Camiseta del rival: los rivales del torneo tienen su propio color. */
   cpuPalette: Palette;
   /** Aspecto del jugador humano: lo fija su perfil local. */

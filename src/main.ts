@@ -181,6 +181,7 @@ async function enterCourt(): Promise<ControlAdapter | null> {
   currentControl = control;
   ui.show('none');
   ui.setCamPreviewVisible(ui.settings.control === 'camera');
+  renderer.view = ui.profile.view;
   return control;
 }
 
@@ -299,6 +300,7 @@ async function startTournament(): Promise<void> {
   if (!control) return;
   tourneyRound = 0;
   ui.setCamPreviewVisible(false);
+  renderer.view = 'third';
   ui.showTourney(0, 'play');
 }
 
@@ -308,6 +310,7 @@ function playTourneyRound(): void {
   const rival = RIVALS[round];
   ui.show('none');
   ui.setCamPreviewVisible(ui.settings.control === 'camera');
+  renderer.view = ui.profile.view;
 
   const match = new MatchMode({
     renderer,
@@ -444,6 +447,7 @@ function startOnlineMatch(session: OnlineSession): void {
   ui.show('none');
   ui.setOnlineInvite(false);
   ui.setCamPreviewVisible(ui.settings.control === 'camera');
+  renderer.view = ui.profile.view;
   track('online_iniciado', { rol: 'anfitrion' });
 
   const remote = new RemoteControl();
@@ -512,6 +516,7 @@ function startGuestView(session: OnlineSession): void {
   stopIdle();
   ui.show('none');
   ui.setCamPreviewVisible(ui.settings.control === 'camera');
+  renderer.view = ui.profile.view;
   track('online_iniciado', { rol: 'invitado' });
 
   const guest = new GuestMatchView({
@@ -712,7 +717,7 @@ async function shareChallenge(): Promise<void> {
 function drillToShots(d: DrillType): { shots: ShotType[]; label: string } {
   if (d === 'mixto') {
     return {
-      shots: ['forehand', 'backhand', 'volleyFh', 'volleyBh', 'bandeja', 'smash'],
+      shots: ['forehand', 'backhand', 'volleyFh', 'volleyBh', 'bandeja'],
       label: 'golpes variados',
     };
   }
@@ -825,6 +830,7 @@ ui.onClearProgress = () => {
   }
 };
 ui.onMenuShown = () => {
+  renderer.view = 'third'; // el fondo del menú es la pista vista desde fuera
   closeOnline(); // volver al menú desde el informe online también suelta al rival
   refreshCoachCard();
 };

@@ -3,8 +3,8 @@ import { COURT } from './court';
 import { PlayerEntity } from './player';
 import { clamp, isOverheadShot, lerp } from '../types';
 import type { Vec3 } from '../types';
-import type { ArmPose } from '../ui/input';
-import type { GameRenderer } from './renderers/GameRenderer';
+import type { ArmPose, LivePose } from '../ui/input';
+import type { GameRenderer, ViewMode } from './renderers/GameRenderer';
 
 // ============================================================================
 // Lenguaje visual: ARCADE DEPORTIVO 2.5D. Formas grandes, siluetas claras,
@@ -18,6 +18,17 @@ import type { GameRenderer } from './renderers/GameRenderer';
 // (Solo proyección: las coordenadas lógicas del juego no cambian.)
 const CAM_Z = 25;
 const CAM_H = 4.15;
+
+// Vista en primera persona: la cámara son los ojos del jugador. Va un poco
+// por detrás de su posición lógica para que la bola siga viéndose en el
+// momento del golpe (la zona de alcance llega hasta su propio plano).
+const EYE_H = 1.62;
+const EYE_BACK = 1.15;
+const NEAR = 0.5; // plano cercano: nada se proyecta más cerca que esto
+// Radio visual de la bola (m): en tercera persona va inflada para leerse
+// desde lejos; en primera persona se acerca al tamaño real.
+const BALL_VIS_THIRD = BALL_RADIUS * 1.85;
+const BALL_VIS_FIRST = 0.062;
 
 const OUTLINE = '#0d1826';
 
@@ -99,6 +110,17 @@ export class Renderer implements GameRenderer {
   // sin tener que exagerar la compresión general de la escena.
   private panFactor = 0;
   private camX = 0;
+  // Cámara activa (la fija `setCamera` cada frame según la vista)
+  private camZ = CAM_Z;
+  private camH = CAM_H;
+  // Encuadres por vista, calculados en resize()
+  private third = { f: 500, horizon: 0, hScale: 1 };
+  private first = { f: 500, horizon: 0, hScale: 1 };
+  /** Mirada hacia arriba (px de horizonte): sigue a las bolas altas. */
+  private pitch = 0;
+  private bobT = 0;
+  /** 'third' = cámara elevada detrás del jugador · 'first' = sus ojos. */
+  view: ViewMode = 'third';
   private shakeMag = 0;
   private particles: Particle[] = [];
   private lastDrawT = 0;
@@ -142,16 +164,19 @@ export class Renderer implements GameRenderer {
     // pero sin que el jugador quede cortado en los laterales.
     const portrait = this.H > this.W * 1.2;
     if (portrait) {
-      this.f = Math.min(this.H * 0.6, this.W * 1.3);
-      this.horizonY = this.H * 0.34;
-      this.hScale = 0.74;
+      this.third = { f: Math.min(this.H * 0.6, this.W * 1.3), horizon: this.H * 0.34, hScale: 0.74 };
       this.panFactor = 0.6;
+      // En vertical el campo de visión es estrecho: se comprime un poco el
+      // ancho para que la pista del rival quepa entera.
+      this.first = { f: Math.min(this.H * 0.62, this.W * 1.15), horizon: this.H * 0.44, hScale: 0.82 };
     } else {
-      this.f = Math.min(this.H * 0.84, this.W * 0.62);
-      this.horizonY = this.H * 0.3;
-      this.hScale = 1;
+      this.third = { f: Math.min(this.H * 0.84, this.W * 0.62), horizon: this.H * 0.3, hScale: 1 };
       this.panFactor = 0.2;
+      this.first = { f: Math.min(this.H * 0.95, this.W * 0.6), horizon: this.H * 0.46, hScale: 1 };
     }
+    this.f = this.third.f;
+    this.horizonY = this.third.horizon;
+    this.hScale = this.third.hScale;
     const g = this.ctx.createRadialGradient(
       this.W / 2, this.H * 0.58, Math.min(this.W, this.H) * 0.42,
       this.W / 2, this.H * 0.58, Math.max(this.W, this.H) * 0.82,
@@ -163,13 +188,49 @@ export class Renderer implements GameRenderer {
 
   /** Proyección perspectiva simple de coordenadas de mundo a pantalla. */
   project(x: number, y: number, z: number): { x: number; y: number; s: number } {
-    const d = Math.max(CAM_Z - z, 0.5);
+    // Recorte en el plano cercano: lo que queda detrás de la cámara se
+    // proyecta sobre ese plano (para suelo y paredes equivale a recortar).
+    const d = Math.max(this.camZ - z, NEAR);
     const s = this.f / d;
     return {
       x: this.W / 2 + (x - this.camX) * s * this.hScale,
-      y: this.horizonY + (CAM_H - y) * s,
+      y: this.horizonY + (this.camH - y) * s,
       s,
     };
+  }
+
+  /** Coloca la cámara de este frame según la vista elegida. */
+  private setCamera(ball: Ball, player: PlayerEntity, showBall: boolean, dt: number): void {
+    if (this.view !== 'first') {
+      // Tercera persona: sigue suavemente al jugador en horizontal para que
+      // nunca quede fuera de encuadre en los laterales (p.ej. al sacar).
+      this.camX += (player.x * this.panFactor - this.camX) * Math.min(dt * 3.5, 1);
+      this.camZ = CAM_Z;
+      this.camH = CAM_H;
+      this.f = this.third.f;
+      this.hScale = this.third.hScale;
+      this.horizonY = this.third.horizon;
+      this.pitch = 0;
+      return;
+    }
+    // Primera persona: los ojos van con el jugador; al correr la cabeza
+    // sube y baja un poco.
+    this.camX += (player.x - this.camX) * Math.min(dt * 12, 1);
+    this.bobT += dt * (4 + 9 * player.moveAmount);
+    this.camZ = player.z + EYE_BACK;
+    this.camH = EYE_H + Math.sin(this.bobT) * 0.035 * player.moveAmount;
+    this.f = this.first.f;
+    this.hScale = this.first.hScale;
+    // Bolas altas (globos): la mirada sube lo justo para no perderlas,
+    // como cuando levantas la cabeza para leer un globo.
+    let want = 0;
+    if (showBall && ball.active && ball.pos.z < this.camZ - 0.8) {
+      const s = this.f / Math.max(this.camZ - ball.pos.z, NEAR);
+      const yNeutral = this.first.horizon + (this.camH - ball.pos.y) * s;
+      want = clamp(this.H * 0.27 - yNeutral, 0, this.H * 0.36);
+    }
+    this.pitch += (want - this.pitch) * Math.min(dt * 5, 1);
+    this.horizonY = this.first.horizon + this.pitch;
   }
 
   shake(mag: number): void {
@@ -215,10 +276,8 @@ export class Renderer implements GameRenderer {
     const dt = this.lastDrawT ? Math.min((now - this.lastDrawT) / 1000, 0.05) : 0.016;
     this.lastDrawT = now;
 
-    // La cámara sigue suavemente al jugador cercano en horizontal para que
-    // nunca quede fuera de encuadre en los laterales (p.ej. al sacar).
-    const camTarget = player.x * this.panFactor;
-    this.camX += (camTarget - this.camX) * Math.min(dt * 3.5, 1);
+    this.setCamera(ball, player, showBall, dt);
+    const fp = this.view === 'first';
 
     const ctx = this.ctx;
     ctx.save();
@@ -238,9 +297,11 @@ export class Renderer implements GameRenderer {
     this.drawAvatar(cpu, this.cpuPalette, true, ball, dt);
     if (showBall && ball.pos.z <= COURT.netZ) this.drawBall(ball);
     this.drawNet();
-    if (showBall && ball.pos.z > COURT.netZ) this.drawBall(ball);
+    // En primera persona la bola deja de verse cuando ya te ha pasado
+    if (showBall && ball.pos.z > COURT.netZ && (!fp || ball.pos.z < this.camZ - 0.3)) this.drawBall(ball);
     this.drawParticles(dt);
-    this.drawAvatar(player, this.playerPalette, false, ball, dt);
+    if (fp) this.drawFirstPersonArms(player, this.playerPalette);
+    else this.drawAvatar(player, this.playerPalette, false, ball, dt);
     ctx.restore();
 
     if (this.vignette) {
@@ -734,7 +795,7 @@ export class Renderer implements GameRenderer {
         const b = this.project(tr[i].x, tr[i].y, tr[i].z);
         const k = (i - (tr.length - 6)) / 6;
         ctx.strokeStyle = `rgba(222, 230, 40, ${(k * 0.28 * speedK).toFixed(3)})`;
-        ctx.lineWidth = Math.max(BALL_RADIUS * b.s * 1.7 * k * speedK, 1.5);
+        ctx.lineWidth = Math.max((this.view === 'first' ? BALL_VIS_FIRST : BALL_VIS_THIRD) * b.s * 0.92 * k * speedK, 1.5);
         ctx.lineCap = 'round';
         ctx.beginPath();
         ctx.moveTo(a.x, a.y);
@@ -744,8 +805,9 @@ export class Renderer implements GameRenderer {
     }
 
     // Sombra dinámica
+    const vis = this.view === 'first' ? BALL_VIS_FIRST : BALL_VIS_THIRD;
     const sh = this.project(pos.x, 0, pos.z);
-    const shR = Math.max(BALL_RADIUS * sh.s * 1.2, 3);
+    const shR = Math.max(vis * sh.s * 0.65, 3);
     const hFade = Math.max(0.18, 0.5 - pos.y * 0.1);
     ctx.fillStyle = `rgba(0, 4, 12, ${hFade.toFixed(3)})`;
     ctx.beginPath();
@@ -753,7 +815,7 @@ export class Renderer implements GameRenderer {
     ctx.fill();
 
     const p = this.project(pos.x, pos.y, pos.z);
-    const r = Math.max(BALL_RADIUS * p.s * 1.85, 4.5);
+    const r = Math.max(vis * p.s, 4.5);
 
     const glow = ctx.createRadialGradient(p.x, p.y, r * 0.5, p.x, p.y, r * 2.6);
     glow.addColorStop(0, 'rgba(232, 238, 60, 0.35)');
@@ -849,6 +911,126 @@ export class Renderer implements GameRenderer {
       ctx.moveTo(x1 - off, y1 - off * 0.6);
       ctx.lineTo(x2 - off, y2 - off * 0.6);
       ctx.stroke();
+    }
+  }
+
+  // ==========================================================================
+  // Primera persona: tus brazos y tu pala en primer plano
+  // ==========================================================================
+
+  /**
+   * Pose de brazos cuando no hay cámara (teclado/táctil): posición de
+   * espera con la pala arriba y el gesto de cada golpe. Mismas unidades que
+   * la pose real (anchos de hombro, relativo al hombro, y hacia abajo).
+   */
+  private cannedArms(p: PlayerEntity): LivePose {
+    const hand = p.dominantHand === 'left' ? -1 : 1;
+    const t = Math.min(p.swingT, 1);
+    const ease = t * t * (3 - 2 * t);
+    // d = hacia el lado dominante (+) o cruzado (-); se convierte al final
+    let h = { d: 0.3, y: 0.56 }; // espera: pala arriba, a un lado, sin tapar la pista
+    if (p.swingType !== null) {
+      if (isOverheadShot(p.swingType) || p.swingType === 'serve') {
+        h = { d: lerp(0.45, -0.25, ease), y: lerp(-1.55, 0.35, ease) };
+      } else if (p.swingType === 'volleyFh' || p.swingType === 'volleyBh') {
+        const side = p.swingType === 'volleyBh' ? -1 : 1;
+        h = { d: side * lerp(0.75, 0.25, ease) - 0.1, y: lerp(0.05, 0.22, ease) };
+      } else {
+        const side = p.swingType === 'backhand' ? -1 : 1;
+        h = { d: side * lerp(1.35, -0.75, ease), y: 0.42 - Math.sin(t * Math.PI) * 0.42 };
+      }
+    }
+    const arm: ArmPose = { ex: h.d * 0.5 * hand + 0.22 * hand, ey: h.y * 0.5 + 0.48, hx: h.d * hand, hy: h.y };
+    const other: ArmPose = { ex: -0.2 * hand, ey: 0.78, hx: 0.28 * hand, hy: 0.62 };
+    return hand === 1 ? { right: arm, left: other, tilt: 0 } : { right: other, left: arm, tilt: 0 };
+  }
+
+  private drawFirstPersonArms(p: PlayerEntity, pal: Palette): void {
+    const ctx = this.ctx;
+    const W = this.W;
+    const H = this.H;
+    // Con cámara mandan los brazos reales; si no, la animación propia.
+    const pose = p.livePose ?? this.cannedArms(p);
+    const U = H * 0.27; // píxeles por ancho de hombro
+    const span = Math.min(W * 0.26, H * 0.3);
+    const shoulderY = H * 0.86 + this.pitch * 0.25;
+    const paddleRight = p.dominantHand !== 'left';
+    const swinging = p.swingType !== null;
+
+    const drawArm = (arm: ArmPose | null, side: 1 | -1, holdsPaddle: boolean): void => {
+      if (!arm) return;
+      const sh = { x: W / 2 + side * span, y: shoulderY };
+      const elbow = { x: sh.x + arm.ex * U, y: sh.y + arm.ey * U };
+      const hand = { x: sh.x + arm.hx * U, y: sh.y + arm.hy * U };
+      if (hand.y > H + U * 0.25 && !holdsPaddle) return; // brazo bajado: no se ve
+      const w = H * 0.085;
+      this.capsule(sh.x, sh.y + U * 0.5, elbow.x, elbow.y, w * 1.15, pal.shirt);
+      this.capsule(elbow.x, elbow.y, hand.x, hand.y, w, pal.skin);
+      // muñequera + puño
+      ctx.fillStyle = '#f4f7fb';
+      ctx.strokeStyle = OUTLINE;
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.arc(hand.x, hand.y, w * 0.62, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+      if (!holdsPaddle) return;
+
+      // La pala prolonga el antebrazo; con el brazo caído se sostiene arriba
+      // (posición de espera), nunca colgando hacia el suelo.
+      let ang = Math.atan2(hand.x - elbow.x, hand.y - elbow.y);
+      const up = Math.PI - 0.3 * side;
+      const drop = clamp(Math.cos(ang), 0, 1); // 1 = antebrazo apuntando al suelo
+      ang += Math.atan2(Math.sin(up - ang), Math.cos(up - ang)) * drop;
+      const handle = H * 0.07;
+      const head = { rx: H * 0.088, ry: H * 0.114 };
+      const cx = hand.x + Math.sin(ang) * (handle + head.ry);
+      const cy = hand.y + Math.cos(ang) * (handle + head.ry);
+      this.capsule(hand.x, hand.y, hand.x + Math.sin(ang) * handle, hand.y + Math.cos(ang) * handle, H * 0.032, '#1c242f', false);
+      const g = ctx.createLinearGradient(cx - head.rx, cy - head.ry, cx + head.rx, cy + head.ry);
+      if (swinging) {
+        g.addColorStop(0, '#ffe9b0');
+        g.addColorStop(1, '#ffbe3d');
+      } else {
+        g.addColorStop(0, '#e8823f');
+        g.addColorStop(1, '#b04e1a');
+      }
+      ctx.fillStyle = g;
+      ctx.strokeStyle = OUTLINE;
+      ctx.lineWidth = Math.max(H * 0.012, 4);
+      ctx.beginPath();
+      ctx.ellipse(cx, cy, head.rx, head.ry, -ang, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+      // agujeros de la pala
+      ctx.fillStyle = 'rgba(0,0,0,0.28)';
+      for (const [ox, oy] of [[0, 0], [-0.4, -0.4], [0.4, -0.4], [-0.4, 0.4], [0.4, 0.4], [0, -0.62], [0, 0.62]]) {
+        const lx = ox * head.rx;
+        const ly = oy * head.ry;
+        ctx.beginPath();
+        ctx.arc(cx + lx * Math.cos(ang) + ly * Math.sin(ang), cy - lx * Math.sin(ang) + ly * Math.cos(ang), H * 0.009, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      // destello de contacto
+      if (swinging && p.swingT < 0.22) {
+        const fa = Math.min((0.22 - p.swingT) * 3.6, 0.8);
+        const fl = ctx.createRadialGradient(cx, cy, 0, cx, cy, head.ry * 2.2);
+        fl.addColorStop(0, `rgba(255, 255, 255, ${fa.toFixed(3)})`);
+        fl.addColorStop(1, 'rgba(255, 255, 255, 0)');
+        ctx.fillStyle = fl;
+        ctx.beginPath();
+        ctx.arc(cx, cy, head.ry * 2.2, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    };
+
+    // El brazo libre detrás; el de la pala, encima
+    if (paddleRight) {
+      drawArm(pose.left, -1, false);
+      drawArm(pose.right, 1, true);
+    } else {
+      drawArm(pose.right, 1, false);
+      drawArm(pose.left, -1, true);
     }
   }
 
